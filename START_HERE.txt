@@ -1,0 +1,4 @@
+1. Ouvre ce dossier dans Codex.
+2. Ouvre CODEX_PROMPT.md.
+3. Copie tout son contenu dans Codex.
+4. Laisse Codex lire les autres fichiers et poursuivre jusqu'aux critères d'acceptation.
