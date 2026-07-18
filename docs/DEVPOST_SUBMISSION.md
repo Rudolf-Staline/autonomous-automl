@@ -121,7 +121,8 @@ and exercise it directly with two commands and committed sample data.
 
 ## Codex and GPT-5.6 usage
 
-Codex served as the implementation and release-audit agent. It read the supplied
+This was a solo Build Week project assisted by Codex. Codex served as the
+implementation and release-audit agent. It read the supplied
 specifications, implemented and integrated the M0–M9 engine, wrote regression tests,
 generated deterministic examples, ran real short-budget demos, diagnosed process
 and resume failures, adversarially tested artifact corruption, and synchronized the

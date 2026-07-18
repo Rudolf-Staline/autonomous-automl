@@ -1,8 +1,8 @@
 # Codex collaboration record
 
 This file records only contributions supported by the working transcript and the
-repository's implementation journal. It does not infer authorship from names or
-invent a separate human/AI role.
+repository's implementation journal. The project owner identifies this as solo
+work assisted by Codex; this record does not invent a separate implementation team.
 
 ## Context received
 
@@ -119,6 +119,6 @@ with the date, task, outputs and validation performed.
 
 ## Human contribution disclosure
 
-The project direction, specifications and Build Week pivot were provided to Codex.
-The available record does not name or distinguish individual human contributors,
-so this document does not assign them unverified implementation work.
+The project owner provided the direction, specifications and Build Week pivots to
+Codex. This is a solo project assisted by Codex; no separate human implementation
+team or unverified contribution is claimed.

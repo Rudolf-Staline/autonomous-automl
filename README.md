@@ -32,6 +32,10 @@ synthetic leakage attack. Across the final Linux RC gates it completed in **16.2
 **225 MiB**. A recent laptop should normally finish in 20–30 seconds; process startup
 can be slower on Windows.
 
+The CLI prints the demo root; the leakage report is
+`<demo-root>/leakage/report.html`. The frozen scope is tabular CSV: certified
+notebook export, M11/M14, and a web UI are not included.
+
 ## Installation
 
 Requirements: Git, internet access for the first dependency sync, and
@@ -302,8 +306,9 @@ GPT-5.6 Sol session. No work is therefore attributed to GPT-5.6 Sol. The honest
 chronology and the decisions Codex accelerated are in
 [`docs/CODEX_COLLABORATION.md`](docs/CODEX_COLLABORATION.md).
 
-The project direction, specifications, and Build Week pivots were supplied to
-Codex; individual human authorship is not inferred from the available record.
+This is a solo Build Week project assisted by Codex. The project owner supplied the
+direction, specifications, and delivery pivots; no separate human implementation
+team is claimed.
 
 ## License
 
