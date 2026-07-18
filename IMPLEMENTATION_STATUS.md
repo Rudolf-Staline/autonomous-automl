@@ -5,32 +5,32 @@ milestone et chaque campagne de validation.
 
 ## Statut global
 
-- État : audit adversarial de la release candidate en cours
+- État : release candidate auditée et testable dans le périmètre gelé
 - Périmètre gelé : fonctionnalités M0 à M9, plus le strict nécessaire au parcours complet
-- Chantier actif : hygiène Git, exactitude CLI/rapport, documentation et preuve par clone neuf
+- Chantier actif : aucun développement ; publication Devpost/Git reste manuelle
 - Dernière mise à jour : 2026-07-18
-- Dernière gate complète connue : 393 tests réussis ; nouvelle gate RC à rejouer
+- Tests globaux : 394 réussis localement et depuis un clone Git neuf
 
-## Audit adversarial RC — en cours au 2026-07-18
+## Audit adversarial RC — PASS au 2026-07-18
 
 - Le noyau M0–M9 est gelé : aucune fonctionnalité produit supplémentaire n'est engagée.
-- Bloqueur découvert : `HEAD` ne contient encore que les documents de spécification ;
-  l'implémentation est présente dans l'arbre de travail mais non suivie. Un commit RC local
-  est requis avant qu'un véritable `git clone` puisse constituer une preuve d'installation.
+- Bloqueur découvert puis corrigé : l'implémentation n'était pas suivie par Git. Le commit
+  RC local `3fa3b26` contient désormais le package, les tests, exemples et documents.
 - Recherche de secrets et d'hygiène : aucun secret réel, fichier `.env`, chemin personnel,
   journal, base SQLite, modèle Joblib ou artefact lourd détecté dans les sources à livrer.
-- Démonstration de référence : PASS en 18,91 s, trois scénarios, environ 225 MiB de RSS
-  maximal, 47 fichiers stables produits sous le répertoire de sortie.
+- Démonstrations RC : PASS en 19,53 s localement et 16,21 s dans le clone neuf,
+  environ 225 MiB de RSS maximal et 47 fichiers stables par sortie complète.
 - Reprise adversariale : PASS ; deux essais terminés avant interruption sont conservés avec
   leur identifiant et `attempt_count=1`, puis le budget effectif passe de 8 s à 11 s.
 - Corruption volontaire du modèle : PASS ; taille/SHA-256 invalides détectés avant chargement.
 - Reconstruction depuis le `PipelineSpec` et rejeu des prédictions : PASS, 36/36 prédictions
   strictement identiques sur le scénario de classification.
-- Écarts de release en correction : sortie CLI trop verbeuse, preuve de neutralisation peu
-  visible dans le rapport, guide juge trop long, ordre du README et version du changelog.
+- Écarts corrigés : sortie CLI condensée, preuve de neutralisation explicite, rapport et
+  chemins lisibles, guide juge réduit, README réordonné et changelog versionné 0.1.0.
 
-Les mesures et résultats définitifs remplaceront ces observations intermédiaires après les
-gates locales puis un clone Git neuf créé à partir du commit RC.
+Aucun bloqueur technique de démonstration, installation ou reproductibilité n'est connu.
+La publication distante, la vidéo, le choix Devpost final et `/feedback` restent des actions
+manuelles et sont listés dans `docs/SUBMISSION_CHECKLIST.md`.
 
 ### Gate locale RC après corrections
 
@@ -83,6 +83,33 @@ erreur avant désérialisation. Le `PipelineSpec` du manifeste a aussi été pas
 étaient strictement identiques au fichier persisté. Le test automatisé
 `test_joblib_checksum_is_verified_before_deserialization` garantit en plus que
 `joblib.load` n'est jamais appelé après une modification taille/hash.
+
+### Gate depuis un vrai clone Git neuf
+
+Source : commit `3fa3b26dc71d103bbdda16cecb9987a2d4cec97e`, cloné avec
+`git clone --no-local` vers `/tmp/autonomous-automl-rc.Yd2dPO/repo`. Le clone avait
+un cache `uv` vide et aucune `.venv` préexistante.
+
+| Commande | Statut | Durée murale | Résultat / avertissement |
+|---|---:|---:|---|
+| `git clone --no-local …` | PASS | 0,06 s | HEAD exact `3fa3b26` |
+| `uv sync --frozen` | PASS | 39,61 s | Python 3.12.13, 74 paquets téléchargés/installés ; aucun avertissement |
+| `uv run automl --help` | PASS | 3,21 s | toutes les commandes publiques visibles |
+| `uv run automl demo` | PASS | 16,21 s | trois scénarios PASS ; pic RSS 230 060 KiB |
+| `uv run automl inspect <demo-root>/leakage` | PASS | 1,32 s | 5 alertes, 3 exclusions visibles |
+| `uv run automl leaderboard <demo-root>/classification-resumed --limit 5` | PASS | 1,42 s | top 5 lisible |
+| `uv run automl validate-artifacts <demo-root>/classification-resumed` | PASS | 1,36 s | SQLite, sources, modèle et replay PASS |
+| `uv run pytest` | PASS | 26,13 s | 394/394 en 25,13 s pytest ; aucun avertissement |
+| `uv run ruff check .` | PASS | 0,04 s | aucun diagnostic |
+| `uv run ruff format --check .` | PASS | 0,04 s | 98 fichiers conformes |
+| `uv run pyright` | PASS | 9,65 s | 0 erreur, 0 avertissement |
+
+La sortie exacte est
+`/tmp/autonomous-automl-rc.Yd2dPO/repo/runs/build-week-demo-20260718T133138Z`.
+Elle contient 47 fichiers stables, 3 172 213 octets au total. Les rapports ont 14,
+14 et 13 liens relatifs valides ; aucun lien absolu, lien manquant, `None`, `NaN` ou
+chemin personnel n'a été trouvé. Après la démo, les commandes juge et toutes les
+gates, `git status --short --untracked-files=all` est resté vide.
 
 ## Gate Build Week précédente — historique
 
@@ -160,12 +187,11 @@ uv run automl doctor
 uv run python scripts/quality.py
 ```
 
-### Bloqueurs de release candidate restant à cet instant
+### Blocages de démonstration actuels
 
-1. ajouter l'implémentation complète au suivi Git et produire un commit RC local ;
-2. rejouer les cinq gates finales après les corrections de présentation ;
-3. cloner ce commit dans un répertoire neuf avec un cache et une `.venv` neufs ;
-4. exécuter dans ce clone l'installation, l'aide CLI, la démo et les commandes juge.
+Aucun. Les seules tâches restantes dépendent des comptes et décisions du propriétaire :
+publication du dépôt, preuve réelle GPT-5.6 si applicable, vidéo YouTube, `/feedback`,
+choix de catégorie, tag et soumission Devpost.
 
 ### Périmètre reporté après le hackathon
 
@@ -220,7 +246,7 @@ chemin de livraison Build Week :
 3. **Terminé** — livrer la CLI Rich, le rapport HTML persistant et la démonstration
    classification/régression/fuite en une commande ;
 4. **Terminé** — README, guides juge/vidéo/Devpost, Dockerfile et historique Codex ;
-5. **En cours** — gates complètes, commit RC, installation et demo depuis un vrai
+5. **Terminé** — gates complètes, commit RC, installation et demo depuis un vrai
    clone Git propre.
 
 ## Plan de fichiers

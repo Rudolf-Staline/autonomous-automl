@@ -19,6 +19,6 @@ suivants doivent toujours être vrais :
 - la validation finale affiche `PASS` pour le chargement du modèle et, lorsque le
   fichier test existe, pour la reproduction des prédictions.
 
-Lors de l'audit RC (Linux, Python 3.12, un worker de modèle), le scénario complet a
-pris 19,27 secondes avec un budget nominal de 6 secondes par run et un pic RSS
-d'environ 225 MiB. Les performances exactes dépendent de la machine.
+Lors des gates RC (Linux, Python 3.12, un worker de modèle), le scénario complet a
+pris entre 16,21 et 19,53 secondes avec un budget nominal de 6 secondes par run et
+un pic RSS d'environ 225 MiB. Les performances exactes dépendent de la machine.

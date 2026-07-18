@@ -17,9 +17,9 @@ uv sync --frozen
 uv run automl demo
 ```
 
-The first sync is network-dependent and commonly takes 1–3 minutes. The audited
-demo took 19.27 seconds on Linux and should normally take 20–30 seconds on a recent
-laptop.
+The first sync is network-dependent; the empty-cache audit took 39.61 seconds. The
+audited demos took 16.21–19.53 seconds on Linux and should normally take 20–30
+seconds on a recent laptop.
 
 ## What should be visible
 

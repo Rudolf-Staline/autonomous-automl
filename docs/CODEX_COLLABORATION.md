@@ -63,7 +63,7 @@ Codex then:
 - executed real runs and found that safe `forkserver` startup consumed most of a
   six-second demo budget;
 - fixed that measured bottleneck by preloading the fold worker module, then reran
-  the demo successfully; the later RC audit measured 19.27 seconds;
+  the demo successfully; the final RC gates measured 16.21–19.53 seconds;
 - added public-path integration tests, installation guidance and submission docs.
 
 ### Quality and correction loop

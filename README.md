@@ -27,10 +27,10 @@ uv run automl demo
 ```
 
 The command runs binary classification with interruption/resume, regression, and a
-synthetic leakage attack. On the audited Linux machine it completed in **19.27
-seconds** after installation, with a maximum observed resident set of about **225
-MiB**. A recent laptop should normally finish in 20–30 seconds; process startup can
-be slower on Windows.
+synthetic leakage attack. Across the final Linux RC gates it completed in **16.21 to
+19.53 seconds** after installation, with a maximum observed resident set of about
+**225 MiB**. A recent laptop should normally finish in 20–30 seconds; process startup
+can be slower on Windows.
 
 ## Installation
 

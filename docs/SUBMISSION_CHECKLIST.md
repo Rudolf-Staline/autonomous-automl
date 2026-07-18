@@ -41,8 +41,8 @@ project owner.
 - [ ] Any claimed GPT-5.6 use is real, evidenced, and consistent across README,
   Devpost, video, and session record. No separate session is currently verifiable
   from this repository/transcript.
-- [ ] Fresh-clone commands pass: `uv sync --frozen` and `uv run automl demo`.
-- [ ] Final release gates and timings copied into `IMPLEMENTATION_STATUS.md`.
+- [x] Fresh-clone commands pass: `uv sync --frozen` and `uv run automl demo`.
+- [x] Final release gates and timings copied into `IMPLEMENTATION_STATUS.md`.
 
 ## Required Codex session evidence
 

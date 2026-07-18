@@ -35,7 +35,7 @@ uv run automl demo --output-root runs/video-demo
 
 **Expected screen:** the three scenario headings, `Checkpoint persisted`, the
 summary table, a top-five leaderboard, leakage proof, and three `PASS` checks. The
-audited command took 19.27 seconds.
+final audited commands took 16.21–19.53 seconds.
 
 ## 0:48–1:15 — Leakage evidence
 
