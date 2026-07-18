@@ -18,11 +18,12 @@ from rich.table import Table
 
 from autonomous_automl import AutoMLConfig, AutoMLRun, __version__
 from autonomous_automl.api import (
+    create_or_validate_trust_artifacts,
     open_run,
     predict_csv,
     validate_run_artifacts,
 )
-from autonomous_automl.contracts import RunResult, TrialStatus
+from autonomous_automl.contracts import RunResult, TrialStatus, TrustCertificateStatus
 from autonomous_automl.runtime import RunProgressEvent, RunStage
 from autonomous_automl.utils.errors import AutoMLError, PlannedInterruption
 
@@ -78,7 +79,15 @@ def fit_command(
         typer.Option(help="auto, binary_classification, multiclass_classification, or regression."),
     ] = None,
     metric: Annotated[str | None, typer.Option(help="Metric name or auto.")] = None,
-    budget: Annotated[str | None, typer.Option(help="Wall budget, for example 30s or 2m.")] = None,
+    budget: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Search-launch budget (finalization and an already running native "
+                "operation may extend total runtime), for example 30s or 2m."
+            )
+        ),
+    ] = None,
     output: Annotated[
         Path | None, typer.Option("--output", "-o", help="New run directory.")
     ] = None,
@@ -91,6 +100,17 @@ def fit_command(
     trial_timeout: Annotated[
         int | None,
         typer.Option(min=1, help="Maximum seconds per individual trial."),
+    ] = None,
+    compute_trust_gap: Annotated[
+        bool | None,
+        typer.Option(
+            "--compute-trust-gap/--no-compute-trust-gap",
+            help="Run the isolated post-selection raw-feature diagnostic.",
+        ),
+    ] = None,
+    trust_gap_timeout_seconds: Annotated[
+        int | None,
+        typer.Option(min=1, help="Maximum seconds for the isolated Trust Gap diagnostic."),
     ] = None,
     interrupt_after_trials: Annotated[
         int | None,
@@ -114,6 +134,8 @@ def fit_command(
             id_column=id_column,
             n_jobs=n_jobs,
             trial_timeout=trial_timeout,
+            compute_trust_gap=compute_trust_gap,
+            trust_gap_timeout_seconds=trust_gap_timeout_seconds,
         )
         display = _ProgressDisplay()
         result = AutoMLRun(run_config, progress_callback=display).fit(
@@ -271,6 +293,75 @@ def validate_artifacts_command(
         _fail(error)
 
 
+@app.command("trust")
+def trust_command(
+    run_directory: Annotated[
+        Path,
+        typer.Argument(help="Persisted run directory.", exists=True, file_okay=False),
+    ],
+) -> None:
+    """Recalculate and display the self-verified trust certificate."""
+
+    try:
+        result = create_or_validate_trust_artifacts(run_directory, persist_if_missing=True)
+        certificate = result.certificate
+        table = Table(title=f"Self-verified trust certificate · {certificate.run_id}")
+        table.add_column("Field", style="cyan")
+        table.add_column("Recorded value", overflow="fold")
+        table.add_row("Status", certificate.status.value)
+        table.add_row(
+            "Verified score",
+            "Unavailable"
+            if certificate.verified_score is None
+            else f"{certificate.verified_score:.6f}",
+        )
+        table.add_row("Leakage findings", str(len(certificate.leakage_findings)))
+        table.add_row(
+            "Unresolved critical findings",
+            str(len(certificate.unresolved_critical_findings)),
+        )
+        table.add_row("Artifact validation", certificate.artifact_validation.status.value)
+        table.add_row("Prediction replay", certificate.prediction_replay.status.value)
+        gap = certificate.observed_trust_gap
+        table.add_row(
+            "Observed Trust Gap",
+            "Unavailable"
+            if gap is None
+            else (
+                gap.status.value
+                if gap.observed_trust_gap is None
+                else f"{gap.observed_trust_gap:+.6f}"
+            ),
+        )
+        if certificate.runtime_telemetry is not None:
+            runtime = certificate.runtime_telemetry
+            table.add_row(
+                "Search budget",
+                f"{runtime.configured_search_budget_seconds:.3f} s",
+            )
+            table.add_row(
+                "Search elapsed",
+                _optional_seconds(runtime.search_elapsed_seconds),
+            )
+            table.add_row(
+                "Finalization",
+                _optional_seconds(runtime.finalization_elapsed_seconds),
+            )
+            table.add_row("Total runtime", _optional_seconds(runtime.total_runtime_seconds))
+            table.add_row("Stop reason", runtime.stop_reason.value.replace("_", " "))
+        table.add_row("JSON", str(result.json_path))
+        table.add_row("HTML", str(result.html_path))
+        console.print(table)
+        if certificate.warnings:
+            console.print("[yellow]Warnings:[/yellow]")
+            for warning in certificate.warnings:
+                console.print(f"  - {escape(warning)}")
+        if certificate.status is TrustCertificateStatus.FAILED:
+            raise typer.Exit(code=1)
+    except (AutoMLError, ValidationError, ValueError, OSError) as error:
+        _fail(error)
+
+
 @app.command("demo")
 def demo_command(
     output_root: Annotated[
@@ -278,6 +369,17 @@ def demo_command(
         typer.Option("--output-root", help="New parent directory for the three demo runs."),
     ] = None,
     budget: Annotated[str, typer.Option(help="Budget per scenario, for example 6s.")] = "6s",
+    compute_trust_gap: Annotated[
+        bool,
+        typer.Option(
+            "--compute-trust-gap/--no-compute-trust-gap",
+            help="Enable the isolated diagnostic for the leakage scenario.",
+        ),
+    ] = True,
+    trust_gap_timeout_seconds: Annotated[
+        int,
+        typer.Option(min=1, help="Maximum seconds for the leakage Trust Gap diagnostic."),
+    ] = 10,
 ) -> None:
     """Run classification+resume, regression, and leakage demos end to end."""
 
@@ -288,7 +390,12 @@ def demo_command(
         root = output_root or Path("runs") / (
             "build-week-demo-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         )
-        _run_demo(root.resolve(), seconds)
+        _run_demo(
+            root.resolve(),
+            seconds,
+            compute_trust_gap=compute_trust_gap,
+            trust_gap_timeout_seconds=trust_gap_timeout_seconds,
+        )
     except (AutoMLError, ValidationError, ValueError, OSError) as error:
         _fail(error)
 
@@ -339,6 +446,8 @@ def _build_config(
     id_column: str | None,
     n_jobs: int | None,
     trial_timeout: int | None,
+    compute_trust_gap: bool | None,
+    trust_gap_timeout_seconds: int | None,
 ) -> AutoMLConfig:
     if config_path is None:
         if target is None:
@@ -362,6 +471,8 @@ def _build_config(
         ("id_column", id_column),
         ("n_jobs", n_jobs),
         ("trial_timeout_seconds", trial_timeout),
+        ("compute_trust_gap", compute_trust_gap),
+        ("trust_gap_timeout_seconds", trust_gap_timeout_seconds),
     ):
         if value is not None:
             overrides[key] = value
@@ -401,6 +512,7 @@ def _print_result(result: RunResult) -> None:
     _, store, manifest = open_run(result.output_dir)
     trials = store.list_trials(manifest.run_id)
     progress = store.get_run_progress(manifest.run_id)
+    trust = create_or_validate_trust_artifacts(result.output_dir, persist_if_missing=True)
     console.print(
         Panel.fit(
             f"[bold green]Completed[/bold green] · {escape(result.run_id)}\n"
@@ -428,11 +540,41 @@ def _print_result(result: RunResult) -> None:
         escape(", ".join(manifest.leakage_report.excluded_columns) or "none"),
     )
     diagnostics.add_row("Trials", _trial_counts(trials))
-    diagnostics.add_row(
-        "Budget",
-        f"{progress.consumed_seconds:.2f}s used / {progress.budget_seconds:.2f}s recorded",
-    )
+    runtime = trust.certificate.runtime_telemetry
+    if runtime is None:
+        diagnostics.add_row(
+            "Budget",
+            f"{progress.consumed_seconds:.2f}s used / {progress.budget_seconds:.2f}s recorded",
+        )
+    else:
+        diagnostics.add_row(
+            "Search budget",
+            f"{runtime.configured_search_budget_seconds:.2f} s",
+        )
+        diagnostics.add_row("Search elapsed", _optional_seconds(runtime.search_elapsed_seconds))
+        diagnostics.add_row(
+            "Finalization",
+            _optional_seconds(runtime.finalization_elapsed_seconds),
+        )
+        diagnostics.add_row("Total runtime", _optional_seconds(runtime.total_runtime_seconds))
+        diagnostics.add_row("Stop reason", runtime.stop_reason.value.replace("_", " "))
+    diagnostics.add_row("Trust status", trust.certificate.status.value)
     console.print(diagnostics)
+    if trust.certificate.selection_explanation is not None:
+        explanation = trust.certificate.selection_explanation
+        console.print(
+            Panel.fit(
+                f"[bold]Selection reason:[/bold] {escape(explanation.selection_reason)}\n"
+                f"{escape(explanation.selection_rule)}"
+                + (
+                    "\n[bold]Tie-breaker:[/bold] " + escape(explanation.tie_breaker_detail)
+                    if explanation.tie_breaker_detail is not None
+                    else ""
+                ),
+                title="Why this pipeline won",
+                border_style="blue",
+            )
+        )
     frame = pd.read_csv(result.leaderboard_path).head(10)
     _print_leaderboard(frame, title="Final leaderboard")
     paths = Table(title="Artifacts", show_header=False)
@@ -444,6 +586,8 @@ def _print_result(result: RunResult) -> None:
     paths.add_row("Leaderboard", str(result.leaderboard_path))
     paths.add_row("Predictions", str(result.predictions_path or "n/a"))
     paths.add_row("HTML report", str(result.report_path))
+    paths.add_row("Trust certificate JSON", str(trust.json_path))
+    paths.add_row("Trust certificate HTML", str(trust.html_path))
     console.print(paths)
     console.print(f"Open report: [bold]{escape(_report_open_command(result.report_path))}[/bold]")
 
@@ -471,6 +615,10 @@ def _format_number(value: object, *, digits: int = 6) -> str:
     return f"{float(str(value)):.{digits}f}"
 
 
+def _optional_seconds(value: float | None) -> str:
+    return "Unavailable" if value is None else f"{value:.3f} s"
+
+
 def _trial_counts(trials: list[Any]) -> str:
     completed = sum(trial.status is TrialStatus.COMPLETED for trial in trials)
     failed = sum(trial.status is TrialStatus.FAILED for trial in trials)
@@ -482,7 +630,13 @@ def _report_open_command(report_path: Path) -> str:
     return f"uv run python -m webbrowser {report_path.resolve().as_uri()}"
 
 
-def _run_demo(root: Path, budget_seconds: int) -> None:
+def _run_demo(
+    root: Path,
+    budget_seconds: int,
+    *,
+    compute_trust_gap: bool,
+    trust_gap_timeout_seconds: int,
+) -> None:
     examples = Path.cwd() / "examples"
     required = (
         "classification_config.json",
@@ -491,6 +645,7 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
         "regression_train.csv",
         "leakage_config.json",
         "leakage_train.csv",
+        "leakage_test.csv",
     )
     missing = [name for name in required if not (examples / name).is_file()]
     if missing:
@@ -506,6 +661,8 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
         examples / "classification_config.json",
         root / "classification-resumed",
         budget_seconds,
+        compute_trust_gap=False,
+        trust_gap_timeout_seconds=trust_gap_timeout_seconds,
     )
     console.rule("1/3 Binary classification + resume · classification_train.csv")
     try:
@@ -528,6 +685,8 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
         examples / "regression_config.json",
         root / "regression",
         budget_seconds,
+        compute_trust_gap=False,
+        trust_gap_timeout_seconds=trust_gap_timeout_seconds,
     )
     results.append(
         AutoMLRun(regression_config, progress_callback=_ProgressDisplay()).fit(
@@ -540,6 +699,8 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
         examples / "leakage_config.json",
         root / "leakage",
         budget_seconds,
+        compute_trust_gap=compute_trust_gap,
+        trust_gap_timeout_seconds=trust_gap_timeout_seconds,
     )
     results.append(
         AutoMLRun(leakage_config, progress_callback=_ProgressDisplay()).fit(
@@ -549,30 +710,51 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
 
     summary = Table(title="Build Week demo completed")
     summary.add_column("Scenario")
-    summary.add_column("Task")
     summary.add_column("Metric")
     summary.add_column("Best score")
-    summary.add_column("Trials")
-    summary.add_column("Artifact check")
+    summary.add_column("Trials ok/fail/stop")
+    summary.add_column("Replay")
     manifests = []
+    trust_results = []
     for name, result in zip(("classification", "regression", "leakage"), results, strict=True):
         validation = validate_run_artifacts(result.output_dir)
         _, store, manifest = open_run(result.output_dir)
+        trust = create_or_validate_trust_artifacts(
+            result.output_dir,
+            persist_if_missing=True,
+        )
+        trust_results.append(trust)
         manifests.append(manifest)
         trials = store.list_trials(manifest.run_id)
         summary.add_row(
             name,
-            manifest.dataset_profile.inferred_task.value,
             result.primary_metric.value,
             f"{result.best_score:.6f}",
-            _trial_counts(trials),
-            "PASS" if validation.pipeline_loadable else "FAIL",
+            "/".join(
+                str(sum(trial.status is status for trial in trials))
+                for status in (
+                    TrialStatus.COMPLETED,
+                    TrialStatus.FAILED,
+                    TrialStatus.INTERRUPTED,
+                )
+            ),
+            "PASS" if validation.predictions_match is True else "n/a",
         )
     leakage_manifest = manifests[-1]
     expected = {"target_copy", "customer_id"}
     if not expected.issubset(leakage_manifest.leakage_report.excluded_columns):
         raise ValueError("demo leakage columns were not neutralized")
     console.print(summary)
+    certificate_summary = Table(title="Self-verified trust certificates")
+    certificate_summary.add_column("Scenario")
+    certificate_summary.add_column("Status")
+    for name, trust in zip(
+        ("classification", "regression", "leakage"),
+        trust_results,
+        strict=True,
+    ):
+        certificate_summary.add_row(name, trust.certificate.status.value)
+    console.print(certificate_summary)
 
     classification_frame = pd.read_csv(results[0].leaderboard_path).head(5)
     _print_leaderboard(classification_frame, title="Classification leaderboard · top 5")
@@ -593,10 +775,51 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
             escape(finding.action),
         )
     console.print(leakage_table)
+    leakage_trust = trust_results[-1].certificate
+    gap = leakage_trust.observed_trust_gap
     console.print(
-        "[bold]Score interpretation:[/bold] every leakage leaderboard score is "
-        "post-neutralization; no contaminated comparison score was calculated."
+        "[bold]Score interpretation:[/bold] every main leaderboard score is "
+        "post-neutralization. The raw comparison, when available, is a separate "
+        "post-selection diagnostic."
     )
+
+    trust_summary = Table(title="TRUST SUMMARY", show_header=False)
+    trust_summary.add_column("Field", style="cyan")
+    trust_summary.add_column("Recorded value", overflow="fold")
+    trust_summary.add_row("Status", leakage_trust.status.value)
+    trust_summary.add_row(
+        "Verified score",
+        "Unavailable"
+        if leakage_trust.verified_score is None
+        else f"{leakage_trust.verified_score:.6f}",
+    )
+    trust_summary.add_row(
+        "Raw diagnostic score",
+        "Unavailable" if gap is None or gap.raw_score is None else f"{gap.raw_score:.6f}",
+    )
+    trust_summary.add_row(
+        "Observed Trust Gap",
+        "NOT_COMPUTED"
+        if gap is None or gap.observed_trust_gap is None
+        else f"{gap.observed_trust_gap:+.6f}",
+    )
+    trust_summary.add_row("Leakage findings", str(len(leakage_trust.leakage_findings)))
+    trust_summary.add_row(
+        "Excluded features",
+        escape(", ".join(leakage_trust.excluded_columns) or "none"),
+    )
+    trust_summary.add_row("Artifact replay", leakage_trust.prediction_replay.status.value)
+    if leakage_trust.runtime_telemetry is not None:
+        runtime = leakage_trust.runtime_telemetry
+        trust_summary.add_row(
+            "Search budget",
+            f"{runtime.configured_search_budget_seconds:.1f} s",
+        )
+        trust_summary.add_row("Search elapsed", _optional_seconds(runtime.search_elapsed_seconds))
+        trust_summary.add_row("Total runtime", _optional_seconds(runtime.total_runtime_seconds))
+    trust_summary.add_row("Certificate", str(trust_results[-1].html_path))
+    trust_summary.add_row("Full report", str(results[-1].report_path))
+    console.print(trust_summary)
 
     artifacts = Table(title="Run artifacts and reports")
     artifacts.add_column("Scenario")
@@ -611,9 +834,23 @@ def _run_demo(root: Path, budget_seconds: int) -> None:
     console.print(f"[bold green]All scenarios passed.[/bold green] Artifacts: {escape(str(root))}")
 
 
-def _demo_config(path: Path, output: Path, budget_seconds: int) -> AutoMLConfig:
+def _demo_config(
+    path: Path,
+    output: Path,
+    budget_seconds: int,
+    *,
+    compute_trust_gap: bool,
+    trust_gap_timeout_seconds: int,
+) -> AutoMLConfig:
     values = AutoMLConfig.read_json(path).model_dump()
-    values.update({"output_dir": output, "budget_seconds": budget_seconds})
+    values.update(
+        {
+            "output_dir": output,
+            "budget_seconds": budget_seconds,
+            "compute_trust_gap": compute_trust_gap,
+            "trust_gap_timeout_seconds": trust_gap_timeout_seconds,
+        }
+    )
     return AutoMLConfig.model_validate(values)
 
 

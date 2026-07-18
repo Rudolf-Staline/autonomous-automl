@@ -18,6 +18,7 @@ from autonomous_automl.contracts import (
     PipelineSpec,
     RunManifest,
     RunStatus,
+    SearchStopReason,
     TaskType,
     TrialResult,
     TrialStatus,
@@ -380,6 +381,72 @@ def test_controller_explores_baseline_and_each_family_at_low_fidelity(
         "scheduler": scheduler.snapshot(),
     }
     assert problem.store.get_run_progress(problem.run_id).checkpoint_revision == 2
+
+
+def test_controller_records_budget_exhaustion_without_changing_launch_policy(
+    tmp_path: Path,
+) -> None:
+    problem = _problem(tmp_path)
+    clock = ManualClock()
+    optimizer = RecordingOptimizer("linear", problem.templates["linear"])
+    evaluator = RecordingEvaluator([0.8], clock=clock, elapsed_seconds=7.0)
+    controller = _controller(
+        problem,
+        {"linear": optimizer},
+        FamilyAllocator(["linear"]),
+        _scheduler(problem, reduction_factor=10),
+        evaluator,
+        BudgetManager(10, clock=clock),
+        clock=clock,
+    )
+
+    results = controller.run()
+
+    assert len(results) == 1
+    assert controller.stop_reason is SearchStopReason.BUDGET_EXHAUSTED
+
+
+def test_controller_records_repeated_duplicate_as_search_space_exhaustion(
+    tmp_path: Path,
+) -> None:
+    problem = _problem(tmp_path)
+    first_clock = ManualClock()
+    first_optimizer = RecordingOptimizer("linear", problem.templates["linear"])
+    first = _controller(
+        problem,
+        {"linear": first_optimizer},
+        FamilyAllocator(["linear"]),
+        _scheduler(problem, reduction_factor=10),
+        RecordingEvaluator([0.8], clock=first_clock),
+        BudgetManager(100, clock=first_clock),
+        clock=first_clock,
+    ).run(max_trials=1)
+    assert len(first) == 1
+    repeated_candidate = first_optimizer.candidates[first[0].trial_id]
+
+    class RepeatingOptimizer(RecordingOptimizer):
+        def ask(self, fidelity: FidelitySpec) -> SearchCandidate:
+            assert fidelity == repeated_candidate.fidelity
+            return repeated_candidate
+
+    resumed_clock = ManualClock()
+    repeated = RepeatingOptimizer(
+        "linear",
+        problem.templates["linear"],
+        known_candidates=[repeated_candidate],
+    )
+    controller = _controller(
+        problem,
+        {"linear": repeated},
+        FamilyAllocator(["linear"]),
+        _scheduler(problem, reduction_factor=10),
+        RecordingEvaluator([], clock=resumed_clock),
+        BudgetManager(100, clock=resumed_clock),
+        clock=resumed_clock,
+    )
+
+    assert controller.run() == []
+    assert controller.stop_reason is SearchStopReason.SEARCH_SPACE_EXHAUSTED
 
 
 def test_pending_promotion_runs_before_another_optimizer_suggestion(tmp_path: Path) -> None:

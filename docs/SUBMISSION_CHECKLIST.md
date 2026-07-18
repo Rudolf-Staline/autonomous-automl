@@ -43,6 +43,11 @@ project owner.
   from this repository/transcript.
 - [x] Fresh-clone commands pass: `uv sync --frozen` and `uv run automl demo`.
 - [x] Final release gates and timings copied into `IMPLEMENTATION_STATUS.md`.
+- [ ] Trust Layer branch gates and fresh-clone demo pass after the final commit.
+- [ ] `automl trust <demo-root>/leakage` displays the same status, score, gap and
+  runtime values as `trust_certificate.json` and `report.html`.
+- [ ] Confirm the public demo certificate states that it is self-verified and not
+  an external, regulatory, or security certification.
 
 ## Required Codex session evidence
 
@@ -55,8 +60,9 @@ No Session ID is generated or guessed in this repository.
 ## Final publication
 
 - [ ] Final public repository URL tested from a clean browser/session.
-- [ ] Planned Git tag `v0.1.0` created only after the RC commit and gates pass.
-- [ ] Tag visible on the public remote and points to the audited commit.
+- [ ] Choose the post-Trust-Layer version/tag explicitly after merge authorization;
+  do not silently move the already validated v0.1.0 tag.
+- [ ] Final tag visible on the public remote and points to the audited commit.
 - [ ] Devpost preview reviewed for formatting, links, category, and limitations.
 - [ ] Submission completed before the deadline.
 - [ ] Submission confirmation saved.

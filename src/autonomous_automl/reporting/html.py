@@ -7,14 +7,30 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, select_autoescape
 
-from autonomous_automl.contracts import MetricName, RunManifest, TrialResult, TrialStatus
+from autonomous_automl.contracts import (
+    ContractModel,
+    MetricName,
+    ObservedTrustGap,
+    PipelineSelectionExplanation,
+    RunManifest,
+    RuntimeTelemetry,
+    TrialResult,
+    TrialStatus,
+    TrustCertificate,
+)
 from autonomous_automl.evaluation.selection import build_leaderboard
 from autonomous_automl.pipelines import pipeline_fingerprint
-from autonomous_automl.tracking import ArtifactRegistration, ExperimentStore
+from autonomous_automl.tracking import (
+    ArtifactRecord,
+    ArtifactRegistration,
+    ArtifactStore,
+    ExperimentStore,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +66,10 @@ class ReportData:
     test_source: str | None
     best_family: str
     best_model: str
+    trust_certificate: TrustCertificate | None
+    runtime_telemetry: RuntimeTelemetry | None
+    selection_explanation: PipelineSelectionExplanation | None
+    observed_trust_gap: ObservedTrustGap | None
 
 
 def render_run_report(store: ExperimentStore, run_id: str) -> str:
@@ -59,13 +79,47 @@ def render_run_report(store: ExperimentStore, run_id: str) -> str:
     trials = store.list_trials(run_id)
     progress = store.get_run_progress(run_id)
     registrations = store.list_artifacts(run_id)
-    data = _build_report_data(manifest, trials, progress.consumed_seconds, registrations)
+    data = _build_report_data(
+        manifest,
+        trials,
+        progress.consumed_seconds,
+        registrations,
+        trust_certificate=_registered_contract(
+            store,
+            registrations,
+            "trust_certificate_json",
+            TrustCertificate,
+        ),
+        runtime_telemetry=_registered_contract(
+            store,
+            registrations,
+            "runtime_telemetry",
+            RuntimeTelemetry,
+        ),
+        selection_explanation=_registered_contract(
+            store,
+            registrations,
+            "selection_explanation",
+            PipelineSelectionExplanation,
+        ),
+        observed_trust_gap=_registered_contract(
+            store,
+            registrations,
+            "trust_gap",
+            ObservedTrustGap,
+        ),
+    )
     environment = Environment(
         autoescape=select_autoescape(default_for_string=True),
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    return environment.from_string(_REPORT_TEMPLATE).render(data=data)
+    return environment.from_string(_REPORT_TEMPLATE).render(
+        data=data,
+        seconds=_format_seconds,
+        timestamp=_format_timestamp,
+        boolean=_format_boolean,
+    )
 
 
 def _build_report_data(
@@ -73,6 +127,11 @@ def _build_report_data(
     trials: list[TrialResult],
     consumed_seconds: float,
     registrations: list[ArtifactRegistration],
+    *,
+    trust_certificate: TrustCertificate | None = None,
+    runtime_telemetry: RuntimeTelemetry | None = None,
+    selection_explanation: PipelineSelectionExplanation | None = None,
+    observed_trust_gap: ObservedTrustGap | None = None,
 ) -> ReportData:
     leaderboard = build_leaderboard(trials)
     metric = leaderboard.primary_metric or _manifest_metric(manifest)
@@ -137,7 +196,35 @@ def _build_report_data(
         ),
         best_family=("n/a" if manifest.best_pipeline is None else manifest.best_pipeline.family),
         best_model=("n/a" if manifest.best_pipeline is None else manifest.best_pipeline.model_name),
+        trust_certificate=trust_certificate,
+        runtime_telemetry=runtime_telemetry,
+        selection_explanation=selection_explanation,
+        observed_trust_gap=observed_trust_gap,
     )
+
+
+def _registered_contract[ContractT: ContractModel](
+    store: ExperimentStore,
+    registrations: list[ArtifactRegistration],
+    name: str,
+    contract_type: type[ContractT],
+) -> ContractT | None:
+    registration = next(
+        (artifact for artifact in registrations if artifact.name == name),
+        None,
+    )
+    if registration is None:
+        return None
+    record = ArtifactRecord(
+        name=registration.name,
+        kind=registration.kind,
+        relative_path=registration.relative_path,
+        sha256=registration.sha256,
+        size_bytes=registration.size_bytes,
+        media_type=registration.media_type,
+    )
+    path = ArtifactStore(store.path.parent).validate(record)
+    return contract_type.read_json(path)
 
 
 def progress_budget(manifest: RunManifest) -> float:
@@ -147,6 +234,20 @@ def progress_budget(manifest: RunManifest) -> float:
         if isinstance(value, int | float) and not isinstance(value, bool):
             return float(value)
     return float(manifest.configuration.budget_seconds)
+
+
+def _format_seconds(value: float | None) -> str:
+    return "Unavailable" if value is None else f"{value:.3f}s"
+
+
+def _format_timestamp(value: datetime | None) -> str:
+    return "Unavailable" if value is None else value.isoformat()
+
+
+def _format_boolean(value: bool | None) -> str:
+    if value is None:
+        return "Unavailable"
+    return "Yes" if value else "No"
 
 
 def _manifest_metric(manifest: RunManifest) -> MetricName:
@@ -229,6 +330,7 @@ _REPORT_TEMPLATE = """<!doctype html>
     pre { padding:15px; overflow:auto; background:#101827; color:#e8eefc; border-radius:9px; }
     .alert { border-left:4px solid var(--warn); padding:10px 13px; background:#fff8ed;
       margin:8px 0; } .ok { color:var(--good); } a { color:var(--accent); }
+    .certificate { border-left:5px solid var(--accent); } .status { font-weight:750; }
     ul { padding-left:20px; } footer { color:var(--muted); margin-top:25px; }
   </style>
 </head>
@@ -243,8 +345,16 @@ _REPORT_TEMPLATE = """<!doctype html>
       <div class="metric"><small>Rows x features</small><strong>{{ data.manifest.dataset_profile.n_rows }} x {{ data.manifest.dataset_profile.n_features }}</strong></div>
       <div class="metric"><small>Budget consumed</small><strong>{{ "%.2f"|format(data.consumed_seconds) }}s</strong></div>
       <div class="metric"><small>Selected model</small><strong>{{ data.best_model }}</strong></div>
+      {% if data.trust_certificate %}<div class="metric"><small>Trust status</small><strong>{{ data.trust_certificate.status.value }}</strong></div>{% endif %}
     </div>
   </header>
+
+  {% if data.trust_certificate %}<section class="card certificate"><h2>Self-verified trust certificate</h2>
+    <p class="status">{{ data.trust_certificate.status.value }}</p>
+    <p>{{ data.trust_certificate.disclaimer }}</p>
+    <p><a href="trust_certificate.html">Open the standalone trust certificate</a> ·
+      <a href="trust_certificate.json">JSON evidence</a></p>
+  </section>{% endif %}
 
   <section class="card"><h2>Dataset and validation</h2>
     <ul>
@@ -271,9 +381,30 @@ _REPORT_TEMPLATE = """<!doctype html>
     {% if data.manifest.leakage_report.excluded_columns %}
       <p><strong>Neutralization proof:</strong> the columns above were removed before
         pipeline search and validation. Every leaderboard score is therefore post-neutralization.
-        No contaminated comparison score was calculated.</p>
+        {% if data.observed_trust_gap and data.observed_trust_gap.status.value == "COMPUTED" %}
+        A separate post-selection raw diagnostic was calculated and never entered the leaderboard.
+        {% else %}No contaminated comparison score was calculated. No raw diagnostic
+        score entered search or selection.{% endif %}</p>
     {% endif %}
   </section>
+
+  {% if data.observed_trust_gap %}<section class="card"><h2>Observed Trust Gap</h2>
+    <p><strong>{{ data.observed_trust_gap.status.value }}</strong> — {{ data.observed_trust_gap.reason }}</p>
+    {% if data.observed_trust_gap.status.value == "COMPUTED" %}
+    <div class="grid">
+      <div class="metric"><small>Raw diagnostic score</small><strong>{{ "%.6f"|format(data.observed_trust_gap.raw_score) }}</strong></div>
+      <div class="metric"><small>Verified score</small><strong>{{ "%.6f"|format(data.observed_trust_gap.verified_score) }}</strong></div>
+      <div class="metric"><small>Apparent score inflation under the raw protocol</small><strong>{{ "%+.6f"|format(data.observed_trust_gap.observed_trust_gap) }}</strong></div>
+      <div class="metric"><small>Diagnostic duration</small><strong>{{ "%.3f"|format(data.observed_trust_gap.diagnostic_elapsed_seconds) }}s</strong></div>
+    </div>
+    <p>Differing columns: <code>{{ data.observed_trust_gap.differing_columns|join(", ") }}</code>.
+      This protocol-specific observation is not presented as a universal causal effect.</p>
+    <p>Raw protocol: <code>{{ data.observed_trust_gap.raw_protocol }}</code> · verified
+      protocol: <code>{{ data.observed_trust_gap.verified_protocol }}</code> · splitter
+      different: <strong>{{ boolean(data.observed_trust_gap.splitter_different) }}</strong>.</p>
+    {% for warning in data.observed_trust_gap.warnings %}<div class="alert">{{ warning }}</div>{% endfor %}
+    {% endif %}
+  </section>{% endif %}
 
   <section class="card"><h2>Search summary</h2>
     <p>Families tested: {{ data.families|join(", ") }}.</p>
@@ -284,6 +415,26 @@ _REPORT_TEMPLATE = """<!doctype html>
     </div>
   </section>
 
+  {% if data.runtime_telemetry %}<section class="card"><h2>Budget and runtime telemetry</h2>
+    <p><code>budget_seconds</code> is the search-launch budget. It prevents new trials
+      from starting after exhaustion; finalization and an already-running native operation
+      may extend total wall-clock runtime.</p>
+    <div class="grid">
+      <div class="metric"><small>Search budget</small><strong>{{ seconds(data.runtime_telemetry.configured_search_budget_seconds) }}</strong></div>
+      <div class="metric"><small>Search elapsed</small><strong>{{ seconds(data.runtime_telemetry.search_elapsed_seconds) }}</strong></div>
+      <div class="metric"><small>Finalization</small><strong>{{ seconds(data.runtime_telemetry.finalization_elapsed_seconds) }}</strong></div>
+      <div class="metric"><small>Total runtime</small><strong>{{ seconds(data.runtime_telemetry.total_runtime_seconds) }}</strong></div>
+      <div class="metric"><small>Budget overshoot</small><strong>{{ seconds(data.runtime_telemetry.budget_overshoot_seconds) }}</strong></div>
+      <div class="metric"><small>Budget remaining at search stop</small><strong>{{ seconds(data.runtime_telemetry.budget_remaining_at_search_stop_seconds) }}</strong></div>
+      <div class="metric"><small>Stop reason</small><strong>{{ data.runtime_telemetry.stop_reason.value }}</strong></div>
+    </div>
+    <table><tbody>
+      <tr><td>Search started</td><td>{{ timestamp(data.runtime_telemetry.search_started_at) }}</td></tr>
+      <tr><td>Search finished</td><td>{{ timestamp(data.runtime_telemetry.search_finished_at) }}</td></tr>
+      <tr><td>Trials started / completed / failed</td><td>{{ data.runtime_telemetry.trials_started }} / {{ data.runtime_telemetry.trials_completed }} / {{ data.runtime_telemetry.trials_failed }}</td></tr>
+    </tbody></table>
+  </section>{% endif %}
+
   <section class="card"><h2>Validation leaderboard{% if data.manifest.leakage_report.excluded_columns %} — post-neutralization{% endif %}</h2>
     <table><thead><tr><th>Rank</th><th>Family</th><th>Model</th><th>Fidelity</th>
       <th>{{ data.score_label }}</th><th>Std (internal)</th><th>Duration</th></tr></thead><tbody>
@@ -292,6 +443,15 @@ _REPORT_TEMPLATE = """<!doctype html>
       <td>{{ row.uncertainty }}</td><td>{{ row.duration }}</td></tr>{% endfor %}
     </tbody></table>
   </section>
+
+  {% if data.selection_explanation %}<section class="card"><h2>Why this pipeline won</h2>
+    <p><strong>Selection reason:</strong> {{ data.selection_explanation.selection_reason }}</p>
+    <p>{{ data.selection_explanation.selection_rule }}</p>
+    {% if data.selection_explanation.tie_breaker_used %}<p><strong>Tie-breaker:</strong> {{ data.selection_explanation.tie_breaker_detail }}</p>{% endif %}
+    <h3>Supporting context</h3><ul>{% for item in data.selection_explanation.supporting_context %}
+      <li><strong>{{ item.label }}:</strong> {{ item.value }} <small>— source: {{ item.provenance }}</small></li>
+    {% endfor %}</ul>
+  </section>{% endif %}
 
   <section class="card"><h2>Best PipelineSpec</h2>
     <p>Selected family: <strong>{{ data.best_family }}</strong> · model:
@@ -311,7 +471,8 @@ _REPORT_TEMPLATE = """<!doctype html>
     <pre>uv sync --frozen
 uv run automl inspect &lt;run-directory&gt;
 uv run automl leaderboard &lt;run-directory&gt;
-uv run automl validate-artifacts &lt;run-directory&gt;</pre>
+uv run automl validate-artifacts &lt;run-directory&gt;
+uv run automl trust &lt;run-directory&gt;</pre>
     <p>To rerun the exact search, keep the recorded CSV bytes unchanged and use
       <code>uv run automl resume &lt;run-directory&gt;</code> for an interrupted run.</p>
   </section>

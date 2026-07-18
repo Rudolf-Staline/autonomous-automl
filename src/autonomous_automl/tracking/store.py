@@ -1063,6 +1063,17 @@ class ExperimentStore:
             raise TrackingError(f"artifact is not registered: {name}")
         return self._artifact_from_row(row)
 
+    def resume_operation_count(self, run_id: str) -> int:
+        """Return the number of distinct resume budget operations for one run."""
+
+        with closing(self._connect()) as connection:
+            self._required_run_row(connection, run_id)
+            row = connection.execute(
+                "SELECT COUNT(*) FROM resume_operations WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return int(row[0])
+
     def checkpoint(self) -> None:
         with closing(self._connect()) as connection:
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")

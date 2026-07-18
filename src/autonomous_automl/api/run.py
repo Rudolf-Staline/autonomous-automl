@@ -17,6 +17,11 @@ import numpy as np
 import optuna
 import pandas as pd
 
+from autonomous_automl.api.trust import (
+    TRUST_CERTIFICATE_HTML_PATH,
+    TRUST_CERTIFICATE_JSON_PATH,
+    create_or_validate_trust_artifacts,
+)
 from autonomous_automl.components import ModelRegistry
 from autonomous_automl.contracts import (
     AutoMLConfig,
@@ -27,13 +32,21 @@ from autonomous_automl.contracts import (
     RunManifest,
     RunResult,
     RunStatus,
+    RuntimeTelemetry,
+    SearchStopReason,
     TrialResult,
     TrialStatus,
     ValidationAudit,
     ValidationPlan,
 )
 from autonomous_automl.data import LoadedDataset, load_dataset
-from autonomous_automl.evaluation import PipelineEvaluator, resolve_metric
+from autonomous_automl.evaluation import (
+    PipelineEvaluator,
+    compute_observed_trust_gap,
+    disabled_trust_gap,
+    explain_pipeline_selection,
+    resolve_metric,
+)
 from autonomous_automl.evaluation.confirmation import FinalistConfirmer
 from autonomous_automl.evaluation.finalization import FinalTrainer, FinalTrainingResult
 from autonomous_automl.evaluation.selection import (
@@ -42,10 +55,22 @@ from autonomous_automl.evaluation.selection import (
     build_leaderboard,
     select_finalist,
 )
+from autonomous_automl.evaluation.trust_gap import (
+    RAW_PREDICTIONS_PATH,
+    RAW_PROTOCOL_PATH,
+    TRUST_GAP_RESULT_PATH,
+)
 from autonomous_automl.pipelines import generate_initial_candidates
 from autonomous_automl.profiling import detect_leakage, profile_dataset
 from autonomous_automl.reporting import render_run_report
-from autonomous_automl.runtime import ProgressCallback, ProgressReporter, RunStage
+from autonomous_automl.runtime import (
+    RUNTIME_STATE_KEY,
+    RUNTIME_TELEMETRY_PATH,
+    ProgressCallback,
+    ProgressReporter,
+    RunStage,
+    RuntimeTelemetryRecorder,
+)
 from autonomous_automl.search import (
     BudgetManager,
     FamilyAllocator,
@@ -77,6 +102,7 @@ REGISTRY_FILENAME = "registry.sqlite3"
 OPTUNA_FILENAME = "optuna.sqlite3"
 MANIFEST_FILENAME = "manifest.json"
 REPORT_FILENAME = "report.html"
+SELECTION_EXPLANATION_PATH = "selection_explanation.json"
 
 
 @dataclass(slots=True)
@@ -327,6 +353,10 @@ class AutoMLRun:
                 retryable_trials=search_retryables,
                 lease_epoch=state.progress.lease_epoch,
             )
+        except KeyboardInterrupt:
+            manifest = store.get_manifest(state.manifest.run_id)
+            _persist_interrupted(store, directory, manifest, reporter)
+            raise
         except Exception as error:
             manifest = store.get_manifest(state.manifest.run_id)
             _persist_failed(store, directory, manifest, reporter, error)
@@ -343,101 +373,152 @@ class AutoMLRun:
         retryable_trials: Sequence[RetryableTrial],
         lease_epoch: int | None = None,
     ) -> RunResult:
-        components = _build_search_components(context)
-        evaluator = PipelineEvaluator(components.registry, n_jobs=context.config.n_jobs)
-        callback = _trial_progress_callback(context)
-        controller = SearchController(
-            run_id=context.run_id,
-            dataset=context.dataset,
-            profile=context.profile,
-            validation_plan=context.validation_plan,
-            metric=context.metric,
-            optimizers=components.optimizers,
-            allocator=components.allocator,
-            scheduler=components.scheduler,
-            evaluator=evaluator,
-            store=context.store,
-            budget=context.budget,
-            trial_timeout_seconds=context.config.trial_timeout_seconds,
-            lease_epoch=lease_epoch,
-            retryable_trials=retryable_trials,
-            trial_completed_callback=callback,
+        progress = context.store.get_run_progress(context.run_id)
+        telemetry = RuntimeTelemetryRecorder.from_scheduler_state(
+            progress.budget_seconds,
+            manifest.scheduler_state,
         )
-        context.reporter.emit(
-            RunStage.SEARCH,
-            f"Searching {len(components.optimizers)} compatible pipeline families",
-            remaining_seconds=controller.budget.remaining_seconds,
-        )
-        controller.run(max_trials=interrupt_after_trials)
-        context.budget = controller.budget
-        if interrupt_after_trials is not None and (
-            len(context.store.list_trials(context.run_id)) >= interrupt_after_trials
-        ):
-            interrupted = _interrupted_manifest(
-                manifest,
-                context.store,
-                context.budget,
+        try:
+            components = _build_search_components(context)
+            evaluator = PipelineEvaluator(components.registry, n_jobs=context.config.n_jobs)
+            callback = _trial_progress_callback(context)
+            controller = SearchController(
+                run_id=context.run_id,
+                dataset=context.dataset,
+                profile=context.profile,
+                validation_plan=context.validation_plan,
+                metric=context.metric,
+                optimizers=components.optimizers,
+                allocator=components.allocator,
+                scheduler=components.scheduler,
+                evaluator=evaluator,
+                store=context.store,
+                budget=context.budget,
+                trial_timeout_seconds=context.config.trial_timeout_seconds,
+                lease_epoch=lease_epoch,
+                retryable_trials=retryable_trials,
+                trial_completed_callback=callback,
             )
-            context.store.update_manifest(interrupted)
-            interrupted.write_json(context.run_directory / MANIFEST_FILENAME)
             context.reporter.emit(
-                RunStage.INTERRUPTED,
-                "Requested checkpoint reached; run can now be resumed",
+                RunStage.SEARCH,
+                f"Searching {len(components.optimizers)} compatible pipeline families",
+                remaining_seconds=controller.budget.remaining_seconds,
+            )
+            controller.run(max_trials=interrupt_after_trials)
+            context.budget = controller.budget
+            if interrupt_after_trials is not None and (
+                len(context.store.list_trials(context.run_id)) >= interrupt_after_trials
+            ):
+                telemetry.stop_search(
+                    SearchStopReason.USER_INTERRUPTED,
+                    budget_remaining_seconds=context.budget.remaining_seconds,
+                )
+                partial = telemetry.snapshot(
+                    context.store.list_trials(context.run_id),
+                    include_finalization=False,
+                )
+                interrupted = _interrupted_manifest(
+                    manifest,
+                    context.store,
+                    context.budget,
+                    partial,
+                )
+                context.store.update_manifest(interrupted)
+                interrupted.write_json(context.run_directory / MANIFEST_FILENAME)
+                context.reporter.emit(
+                    RunStage.INTERRUPTED,
+                    "Requested checkpoint reached; run can now be resumed",
+                    remaining_seconds=context.budget.remaining_seconds,
+                )
+                raise PlannedInterruption(str(context.run_directory))
+
+            search_trials = context.store.list_trials(context.run_id)
+            context.reporter.emit(
+                RunStage.CONFIRMATION,
+                "Re-evaluating the strongest pipeline and the baseline",
                 remaining_seconds=context.budget.remaining_seconds,
             )
-            raise PlannedInterruption(str(context.run_directory))
-
-        search_trials = context.store.list_trials(context.run_id)
-        context.reporter.emit(
-            RunStage.CONFIRMATION,
-            "Re-evaluating the strongest pipeline and the baseline",
-            remaining_seconds=context.budget.remaining_seconds,
-        )
-        confirmer = FinalistConfirmer(
-            run_id=context.run_id,
-            evaluator=evaluator,
-            dataset=context.dataset,
-            profile=context.profile,
-            validation_plan=context.validation_plan,
-            store=context.store,
-            budget=context.budget,
-            metric=context.metric,
-            lease_epoch=context.store.get_run_progress(context.run_id).lease_epoch,
-            fidelity_policy=components.policy,
-            top_n=1,
-            trial_timeout_seconds=context.config.trial_timeout_seconds,
-            component_states_supplier=lambda: context.store.load_component_states(context.run_id),
-        )
-        confirmer.run(search_trials)
-        trials = context.store.list_trials(context.run_id)
-        leaderboard = build_leaderboard(trials)
-        if not leaderboard.entries:
-            raise RunExecutionError("all compatible pipelines failed; inspect trials.csv")
-        selection = select_finalist(
-            leaderboard,
-            context.config.optimization_profile,
-            require_full_fidelity=bool(leaderboard.finalists),
-        )
-        context.reporter.emit(
-            RunStage.FINAL_TRAINING,
-            f"Retraining selected {selection.selected.model_name} pipeline on all rows",
-            remaining_seconds=context.budget.remaining_seconds,
-        )
-        final_result = FinalTrainer(
-            components.registry,
-            n_jobs=context.config.n_jobs,
-        ).fit(
-            selection.selected.pipeline_spec,
-            context.dataset,
-            context.profile,
-        )
-        return _persist_final_run(
-            context,
-            manifest,
-            leaderboard,
-            selection.selected,
-            final_result,
-        )
+            confirmer = FinalistConfirmer(
+                run_id=context.run_id,
+                evaluator=evaluator,
+                dataset=context.dataset,
+                profile=context.profile,
+                validation_plan=context.validation_plan,
+                store=context.store,
+                budget=context.budget,
+                metric=context.metric,
+                lease_epoch=context.store.get_run_progress(context.run_id).lease_epoch,
+                fidelity_policy=components.policy,
+                top_n=1,
+                trial_timeout_seconds=context.config.trial_timeout_seconds,
+                component_states_supplier=lambda: context.store.load_component_states(
+                    context.run_id
+                ),
+            )
+            confirmer.run(search_trials)
+            trials = context.store.list_trials(context.run_id)
+            leaderboard = build_leaderboard(trials)
+            if not leaderboard.entries:
+                raise RunExecutionError("all compatible pipelines failed; inspect trials.csv")
+            selection = select_finalist(
+                leaderboard,
+                context.config.optimization_profile,
+                require_full_fidelity=bool(leaderboard.finalists),
+            )
+            telemetry.stop_search(
+                controller.stop_reason or SearchStopReason.CONTROLLER_STOPPED,
+                budget_remaining_seconds=context.budget.remaining_seconds,
+            )
+            telemetry.start_finalization()
+            context.reporter.emit(
+                RunStage.FINAL_TRAINING,
+                f"Retraining selected {selection.selected.model_name} pipeline on all rows",
+                remaining_seconds=context.budget.remaining_seconds,
+            )
+            final_result = FinalTrainer(
+                components.registry,
+                n_jobs=context.config.n_jobs,
+            ).fit(
+                selection.selected.pipeline_spec,
+                context.dataset,
+                context.profile,
+            )
+            return _persist_final_run(
+                context,
+                manifest,
+                leaderboard,
+                selection.selected,
+                final_result,
+                telemetry,
+            )
+        except PlannedInterruption:
+            raise
+        except KeyboardInterrupt:
+            if not telemetry.search_stopped:
+                telemetry.stop_search(
+                    SearchStopReason.USER_INTERRUPTED,
+                    budget_remaining_seconds=context.budget.remaining_seconds,
+                )
+            snapshot = telemetry.snapshot(
+                context.store.list_trials(context.run_id),
+                include_finalization=telemetry.finalization_started,
+            )
+            _persist_runtime_checkpoint(context, snapshot)
+            raise
+        except Exception:
+            if not telemetry.search_stopped:
+                telemetry.stop_search(
+                    SearchStopReason.FATAL_ERROR,
+                    budget_remaining_seconds=context.budget.remaining_seconds,
+                )
+            else:
+                telemetry.mark_fatal_error()
+            snapshot = telemetry.snapshot(
+                context.store.list_trials(context.run_id),
+                include_finalization=telemetry.finalization_started,
+            )
+            _persist_runtime_checkpoint(context, snapshot)
+            raise
 
 
 def _build_search_components(context: _RuntimeContext) -> _SearchComponents:
@@ -510,6 +591,7 @@ def _persist_final_run(
     leaderboard: Leaderboard,
     selected: LeaderboardEntry,
     final_result: FinalTrainingResult,
+    telemetry: RuntimeTelemetryRecorder,
 ) -> RunResult:
     context.reporter.emit(
         RunStage.ARTIFACTS,
@@ -538,6 +620,66 @@ def _persist_final_run(
     artifacts["best_pipeline_spec"] = specification_record.relative_path
 
     trials = context.store.list_trials(context.run_id)
+    selection_explanation = explain_pipeline_selection(
+        leaderboard,
+        trials,
+        context.config.optimization_profile,
+        selected_trial_id=selected.trial_id,
+        pipeline_size_bytes=pipeline_record.size_bytes,
+    )
+    selection_record = context.artifact_store.write_contract(
+        "selection_explanation",
+        selection_explanation,
+        relative_path=SELECTION_EXPLANATION_PATH,
+    )
+    _register_record(context.store, context.run_id, selection_record)
+    artifacts["selection_explanation"] = selection_record.relative_path
+
+    selected_trial = _trial_by_id(trials, selected.trial_id)
+    if context.config.compute_trust_gap:
+        trust_gap_evaluation = compute_observed_trust_gap(
+            selected_trial=selected_trial,
+            dataset=context.dataset,
+            profile=context.profile,
+            leakage_report=context.leakage,
+            validation_plan=context.validation_plan,
+            metric=context.metric,
+            timeout_seconds=context.config.trust_gap_timeout_seconds,
+            n_jobs=context.config.n_jobs,
+        )
+    else:
+        trust_gap_evaluation = None
+    trust_gap = (
+        disabled_trust_gap(context.metric)
+        if trust_gap_evaluation is None
+        else trust_gap_evaluation.result
+    )
+    if trust_gap_evaluation is not None and trust_gap_evaluation.raw_protocol is not None:
+        raw_protocol_record = context.artifact_store.write_contract(
+            "trust_gap_raw_protocol",
+            trust_gap_evaluation.raw_protocol,
+            relative_path=RAW_PROTOCOL_PATH,
+        )
+        _register_record(context.store, context.run_id, raw_protocol_record)
+        artifacts["trust_gap_raw_protocol"] = raw_protocol_record.relative_path
+    if trust_gap_evaluation is not None and trust_gap_evaluation.raw_predictions is not None:
+        raw_predictions_record = context.artifact_store.write_dataframe(
+            "trust_gap_raw_predictions",
+            trust_gap_evaluation.raw_predictions,
+            relative_path=RAW_PREDICTIONS_PATH,
+        )
+        _register_record(context.store, context.run_id, raw_predictions_record)
+        artifacts["trust_gap_raw_predictions"] = raw_predictions_record.relative_path
+    trust_gap_record = context.artifact_store.write_contract(
+        "trust_gap",
+        trust_gap,
+        relative_path=TRUST_GAP_RESULT_PATH,
+    )
+    _register_record(context.store, context.run_id, trust_gap_record)
+    artifacts["trust_gap"] = trust_gap_record.relative_path
+    if context.store.list_trials(context.run_id) != trials:
+        raise RunExecutionError("Trust Gap diagnostic modified the main trial registry")
+
     leaderboard_frame = _leaderboard_frame(leaderboard, trials)
     leaderboard_record = context.artifact_store.write_dataframe(
         "leaderboard",
@@ -580,6 +722,8 @@ def _persist_final_run(
             "manifest": MANIFEST_FILENAME,
             "report": REPORT_FILENAME,
             "structured_log": "logs/run.jsonl",
+            "trust_certificate_json": TRUST_CERTIFICATE_JSON_PATH,
+            "trust_certificate_html": TRUST_CERTIFICATE_HTML_PATH,
         }
     )
 
@@ -588,7 +732,6 @@ def _persist_final_run(
         pipeline_registration,
     )
     _verify_final_predictions(restored_pipeline, context.dataset, final_result)
-    selected_trial = _trial_by_id(trials, selected.trial_id)
     user_score = _user_metric_value(selected_trial, context.metric)
     if user_score is None:
         raise RunExecutionError("selected trial has no aggregate score")
@@ -602,6 +745,15 @@ def _persist_final_run(
         "consumed_seconds": progress.consumed_seconds,
         "effective_budget_seconds": progress.budget_seconds,
     }
+    runtime_telemetry = telemetry.snapshot(trials, include_finalization=True)
+    states[RUNTIME_STATE_KEY] = runtime_telemetry.to_json_value()
+    runtime_record = context.artifact_store.write_contract(
+        "runtime_telemetry",
+        runtime_telemetry,
+        relative_path=RUNTIME_TELEMETRY_PATH,
+    )
+    _register_record(context.store, context.run_id, runtime_record)
+    artifacts["runtime_telemetry"] = runtime_record.relative_path
     now = datetime.now(UTC)
     completed_manifest = previous_manifest.model_copy(
         update={
@@ -643,6 +795,12 @@ def _persist_final_run(
         media_type="application/x-ndjson",
     )
     del log_registration
+    trust_artifacts = create_or_validate_trust_artifacts(
+        context.run_directory,
+        persist_if_missing=True,
+    )
+    if not trust_artifacts.persisted:
+        raise ArtifactValidationError("trust certificate was not persisted")
     report = render_run_report(context.store, context.run_id)
     atomic_write_text(context.run_directory / REPORT_FILENAME, report)
     _register_existing(
@@ -881,6 +1039,7 @@ def _interrupted_manifest(
     manifest: RunManifest,
     store: ExperimentStore,
     budget: BudgetManager,
+    runtime_telemetry: RuntimeTelemetry,
 ) -> RunManifest:
     states = store.load_component_states(manifest.run_id)
     progress = store.synchronize_consumed_seconds(manifest.run_id, budget.consumed_seconds)
@@ -889,6 +1048,7 @@ def _interrupted_manifest(
         "consumed_seconds": progress.consumed_seconds,
         "effective_budget_seconds": progress.budget_seconds,
     }
+    states[RUNTIME_STATE_KEY] = runtime_telemetry.to_json_value()
     return manifest.model_copy(
         update={
             "status": RunStatus.INTERRUPTED,
@@ -898,6 +1058,24 @@ def _interrupted_manifest(
         },
         deep=True,
     )
+
+
+def _persist_runtime_checkpoint(
+    context: _RuntimeContext,
+    runtime_telemetry: RuntimeTelemetry,
+) -> None:
+    current = context.store.get_manifest(context.run_id)
+    states = dict(current.scheduler_state)
+    states[RUNTIME_STATE_KEY] = runtime_telemetry.to_json_value()
+    updated = current.model_copy(
+        update={
+            "updated_at": datetime.now(UTC),
+            "scheduler_state": states,
+        },
+        deep=True,
+    )
+    context.store.update_manifest(updated)
+    updated.write_json(context.run_directory / MANIFEST_FILENAME)
 
 
 def _persist_interrupted(

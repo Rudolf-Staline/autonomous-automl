@@ -7,7 +7,31 @@ project follows semantic versioning.
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Self-verified trust certificates in deterministic JSON and standalone HTML,
+  derived from persisted run evidence and exposed through `automl trust`.
+- Factual `Why this pipeline won` evidence with the exact existing selection rule
+  and sourced supporting context.
+- Separate search-launch budget, search, finalization, total-runtime, trial-count,
+  overshoot and stop-reason telemetry.
+- Optional isolated Observed Trust Gap diagnostics, disabled by default and never
+  used by Optuna, the main leaderboard, or final selection.
+- Targeted tests for certificate status/corruption, Trust Gap direction and
+  isolation, selection explanations, runtime/resume telemetry, old-run loading,
+  CLI and HTML consistency.
+
+### Changed
+
+- The three-scenario demo now emits trust certificates for every completed run and
+  enables the Trust Gap only for its synthetic leakage scenario.
+- The report and CLI expose persisted Trust Layer evidence and clarify that
+  `budget_seconds` is a search-launch budget.
+
+### Compatibility
+
+- No SQLite migration or destructive manifest change. The new configuration fields
+  are additive; pre-Trust payloads load with the diagnostic disabled.
 
 ## [0.1.0] - 2026-07-18
 

@@ -5,7 +5,10 @@ score deserves to be trusted.**
 
 Autonomous AutoML turns tabular CSV data into a leakage-aware diagnosis, a
 budgeted search, a selected scikit-learn pipeline, predictions, and a standalone
-run report. It runs locally without an API key or external service.
+run report. It also emits a **Self-verified trust certificate** showing how the
+score was obtained, which risks were neutralized, why the final pipeline won, and
+whether the saved artifacts reproduce the result. It runs locally without an API
+key or external service.
 
 ## The problem
 
@@ -27,12 +30,13 @@ uv run automl demo
 ```
 
 The command runs binary classification with interruption/resume, regression, and a
-synthetic leakage attack. Across the final Linux RC gates it completed in **16.21 to
-19.53 seconds** after installation, with a maximum observed resident set of about
-**225 MiB**. A recent laptop should normally finish in 20–30 seconds; process startup
-can be slower on Windows.
+synthetic leakage attack. Trust Layer demo gates completed in **16.64 to 19.92
+seconds** on the audited Linux machine, with a maximum observed resident set of
+about **227 MiB**. A recent laptop should normally finish in 20–30 seconds; process
+startup can be slower on Windows.
 
-The CLI prints the demo root; the leakage report is
+The CLI prints the demo root. The leakage trust certificate is
+`<demo-root>/leakage/trust_certificate.html`; its full report is
 `<demo-root>/leakage/report.html`. The frozen scope is tabular CSV: certified
 notebook export, M11/M14, and a web UI are not included.
 
@@ -88,9 +92,10 @@ uv run automl demo
 
 ## Expected result
 
-The terminal shows each stage, consumed/remaining budget, trial counts, the current
-search objective, a final top-five leaderboard, leakage evidence/actions, artifact
-checks, and the exact report command. It ends with:
+The terminal shows each stage, consumed/remaining search budget, trial counts, the
+current search objective, a final top-five leaderboard, leakage evidence/actions,
+artifact replay, and the exact certificate/report paths. It ends with a `TRUST
+SUMMARY` and:
 
 ```text
 All scenarios passed.
@@ -103,13 +108,18 @@ The invariant results are:
 - regression selects RMSE and writes 36 finite predictions;
 - the leakage scenario excludes `target_copy`, `approved_after_review`, and
   `customer_id` before search;
+- a separate post-selection raw diagnostic is stored outside the search registry
+  and reports `COMPUTED` or an explicit `NOT_COMPUTED` reason;
 - every final model loads through its registered size/SHA-256 record;
 - replayed test predictions match the persisted predictions;
-- each run contains a standalone `report.html`.
+- each run contains `trust_certificate.json`, `trust_certificate.html`, and a
+  standalone `report.html`.
 
 Exact short-budget scores and the family selected at a time boundary can vary with
 hardware. The score-independent assertions are recorded in
 [`examples/EXPECTED_RESULTS.md`](examples/EXPECTED_RESULTS.md).
+On the audited Linux Trust Layer run, the synthetic leakage scenario recorded raw
+score `1.000000`, verified ROC AUC `0.837941`, and Observed Trust Gap `+0.162059`.
 
 ## Features in the frozen release
 
@@ -126,9 +136,35 @@ hardware. The score-independent assertions are recorded in
 - per-trial timeout/error containment with failed trials retained in SQLite;
 - interruption/resume with budget and completed-trial preservation;
 - final full-data fit, Joblib registration, prediction replay, and HTML reporting.
+- deterministic Self-verified trust certificate statuses derived from persisted
+  evidence, not an external assessment;
+- a factual `Why this pipeline won` explanation that mirrors the active selection
+  profile and records provenance for supporting context;
+- separate search/finalization/runtime telemetry without changing
+  `budget_seconds` or launch decisions;
+- optional post-selection Observed Trust Gap diagnostics, isolated from Optuna,
+  the main SQLite trials, leaderboard, and selected `PipelineSpec`.
 
 Optional XGBoost, LightGBM, and CatBoost adapters are lazy. Their absence does not
 break the required scikit-learn core.
+
+### Trust certificate status rules
+
+The status is recalculable from persisted evidence:
+
+- `SELF_VERIFIED`: completed run, final pipeline present, artifact validation and
+  prediction replay both `PASS`, no unresolved critical finding, and no recorded
+  warning or leakage finding;
+- `SELF_VERIFIED_WITH_WARNINGS`: the same essential checks pass, with one or more
+  recorded non-critical warnings or leakage findings;
+- `INCOMPLETE`: the run, final pipeline, artifact validation, or prediction replay
+  is unavailable/incomplete, or a critical finding remains unresolved;
+- `FAILED`: the run failed, an essential artifact check failed, or prediction replay
+  diverged.
+
+`FAILED` takes precedence over `INCOMPLETE`. Standing scope limitations are always
+shown but do not by themselves downgrade a clean certificate. These are internal
+engineering rules, not a judgment by a language model or an outside certifier.
 
 ## Architecture
 
@@ -136,7 +172,7 @@ break the required scikit-learn core.
 CSV -> profile -> leakage guard -> persisted validation folds
     -> compatible PipelineSpecs -> Optuna + multi-fidelity allocation
     -> leaderboard -> final PipelineSpec -> Joblib + predictions
-    -> SQLite/manifest verification -> standalone HTML report
+    -> SQLite/manifest verification -> Trust Layer -> standalone HTML report
 ```
 
 The package separates descriptions from executables:
@@ -151,7 +187,7 @@ evaluation/  fold-local fitting, metrics, OOF, timeouts, final training
 search/      Optuna, fidelity scheduler, budget, family allocator
 tracking/    SQLite transactions, resume, confined/checksummed artifacts
 api/         fit, resume, safe load, prediction, replay validation
-reporting/   artifact-backed leaderboard and standalone HTML
+reporting/   artifact-backed report and self-verified trust certificate
 cli/         Typer/Rich presentation
 ```
 
@@ -166,8 +202,10 @@ the selected pipeline.
   ranking, or final selection.
 - Exact/near target copies and high-confidence identifiers are excluded before
   pipeline generation and recorded with evidence and action.
-- The report labels leakage-scenario leaderboard scores as post-neutralization; it
-  does not invent a contaminated comparison score.
+- Every main leaderboard score is post-neutralization. When explicitly enabled,
+  the raw comparison is a separate post-selection diagnostic using the selected
+  algorithm, persisted folds and persisted execution seeds; it never enters
+  Optuna, the main leaderboard, or selection.
 - Learned imputers and encoders live inside the pipeline fitted on each training
   fold.
 - One-hot encoding ignores unknown categories; other encoders define fallbacks.
@@ -184,6 +222,7 @@ automl inspect             show persisted diagnostics and budget state
 automl leaderboard         print the persisted ranking
 automl predict             score a target-free CSV with the verified model
 automl validate-artifacts  verify SQLite, hashes, Joblib, and prediction replay
+automl trust               recalculate and display the self-verified certificate
 automl demo                run the three Build Week scenarios
 automl doctor              show package, Python, and SQLite versions
 ```
@@ -210,7 +249,14 @@ uv run automl fit examples/classification_train.csv \
 uv run automl resume runs/resume-demo --additional-budget 3s
 uv run automl inspect runs/resume-demo
 uv run automl validate-artifacts runs/resume-demo
+uv run automl trust runs/resume-demo
 ```
+
+`budget_seconds` is the search-launch budget. It prevents new trials from starting
+after the relevant launch allowance is exhausted. Finalization and an already
+running native operation may extend total wall-clock runtime. Use
+`--compute-trust-gap` only when the optional post-selection diagnostic is wanted;
+`--trust-gap-timeout-seconds` bounds its separate execution.
 
 Run `uv run automl --help` or `uv run automl COMMAND --help` for all options.
 
@@ -227,6 +273,7 @@ run = AutoMLRun(
         budget_seconds=30,
         random_seed=42,
         output_dir="runs/python-api",
+        compute_trust_gap=False,
     )
 )
 result = run.fit("data/train.csv")
@@ -247,9 +294,17 @@ run-directory/
 ├── optuna.sqlite3
 ├── trials.csv
 ├── leaderboard.csv
+├── selection_explanation.json
+├── runtime_telemetry.json
 ├── best_pipeline_spec.json
 ├── best_pipeline.joblib
 ├── predictions.csv              # only when a test CSV is supplied
+├── trust_gap/
+│   ├── result.json
+│   ├── raw_protocol.json         # only after a comparable diagnostic attempt
+│   └── raw_oof_predictions.csv   # only after a completed diagnostic
+├── trust_certificate.json
+├── trust_certificate.html
 ├── environment.json
 ├── logs/run.jsonl
 └── report.html
@@ -282,8 +337,15 @@ of the standard gate.
 - A certified generated notebook is not delivered. `RunResult.notebook_path` is
   `None`; reproducibility is verified through the manifest, `PipelineSpec`,
   registered Joblib, and prediction replay.
-- Short budgets are soft global envelopes with protected finalization reserves; a
-  native operation already in progress can finish slightly beyond a boundary.
+- `budget_seconds` is a search-launch budget with protected phase reserves, not a
+  hard total wall-clock deadline. Finalization and an already-running native
+  operation may extend the total runtime.
+- The certificate is evidence generated and checked by this engine. It is not an
+  external, regulatory, security, scientific, ethical, or commercial certification.
+- Observed Trust Gap is optional and protocol-specific. It is returned as
+  `NOT_COMPUTED` when the raw/verified comparison would be unavailable,
+  incompatible, too expensive, or misleading; a computed value is not a universal
+  causal leakage penalty.
 - Cross-machine floating-point behavior can change short-budget scores or candidate
   ordering even with fixed seeds; persisted predictions are checked within the run.
 - The provided Dockerfile is an optional convenience. The audited release path is
@@ -299,7 +361,10 @@ Codex acted as the repository implementation and release-audit agent. It followe
 the supplied specification order, built and integrated M0–M9, created tests and
 examples, measured real demos, diagnosed failures, verified resume/corruption
 behavior, and synchronized the CLI, report, and submission documentation with
-observed outputs.
+observed outputs. On the isolated `feat/trust-layer` work, Codex also audited the
+persisted evidence, implemented the four requested Trust Layer components, added
+targeted corruption/isolation/compatibility tests, and measured the real diagnostic
+and demo costs without changing the search selector.
 
 The available transcript and repository do not identify a separate, verifiable
 GPT-5.6 Sol session. No work is therefore attributed to GPT-5.6 Sol. The honest

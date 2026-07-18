@@ -29,7 +29,13 @@ class AutoMLConfig(ContractModel):
     target: str = Field(min_length=1)
     task: TaskType = TaskType.AUTO
     metric: MetricName = MetricName.AUTO
-    budget_seconds: int = Field(gt=0)
+    budget_seconds: int = Field(
+        gt=0,
+        description=(
+            "Search-launch budget. New trials stop launching when exhausted; finalization "
+            "and an already-running native operation may extend total wall-clock runtime."
+        ),
+    )
     random_seed: int = Field(default=42, ge=0, le=4_294_967_295)
     n_jobs: int = Field(default=1, ge=1)
     output_dir: Path = Path("runs/automl")
@@ -42,6 +48,8 @@ class AutoMLConfig(ContractModel):
     enable_gpu: bool = False
     memory_limit_mb: int | None = Field(default=None, ge=128)
     trial_timeout_seconds: int | None = Field(default=None, gt=0)
+    compute_trust_gap: bool = False
+    trust_gap_timeout_seconds: int = Field(default=30, gt=0)
 
     @field_validator(
         "target",

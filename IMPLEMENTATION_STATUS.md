@@ -5,11 +5,151 @@ milestone et chaque campagne de validation.
 
 ## Statut global
 
-- État : release candidate auditée et testable dans le périmètre gelé
-- Périmètre gelé : fonctionnalités M0 à M9, plus le strict nécessaire au parcours complet
-- Chantier actif : aucun développement ; publication Devpost/Git reste manuelle
+- État : release v0.1.0 stable ; Trust Layer implémentée, gates locales réussies
+- Périmètre actif : Trust Certificate, explication de sélection, télémétrie et Trust Gap
+- Branche active : `feat/trust-layer`
+- Chantier actif : commit local de validation puis gates depuis un clone neuf
 - Dernière mise à jour : 2026-07-18
-- Tests globaux : 394 réussis localement et depuis un clone Git neuf
+- Tests historiques au point de branchement : 394 réussis ; suite courante : 451 réussis
+
+## Plan Trust Layer — 2026-07-18
+
+### Audit préalable des preuves disponibles
+
+- `RunManifest` contient déjà les hashes des CSV, la tâche, le profil, le rapport de
+  fuite, le plan et l'audit de validation, le `PipelineSpec` final, la métrique, le
+  score final, les chemins d'artefacts et l'état du scheduler.
+- SQLite v2 conserve les essais terminés, échoués et interrompus, les résultats par
+  fold, les snapshots, les opérations de reprise, les événements et les hashes de
+  tous les artefacts enregistrés.
+- `validate_run_artifacts` vérifie déjà l'intégrité SQLite, l'accord du manifeste,
+  les hashes des sources, chaque artefact enregistré, le chargement Joblib et le
+  rejeu des prédictions lorsqu'un fichier de prédiction existe.
+- `ArtifactStore` fournit des écritures atomiques, confinées et immuables ; la table
+  `artifacts` permet d'ajouter les preuves Trust Layer sans modifier les tables des
+  essais ni le leaderboard.
+- Le rapport HTML est compilé exclusivement depuis le manifeste, SQLite et
+  l'inventaire d'artefacts. Il peut donc afficher de nouveaux contrats persistés sans
+  recalculer ni inventer de données.
+- Les données qui n'existent pas encore sont : les durées séparées recherche /
+  finalisation, un motif de sélection matérialisé, et une évaluation brute isolée.
+
+### Architecture et ordre d'implémentation
+
+1. Ajouter dans `contracts/` des contrats JSON versionnés et optionnels pour la
+   télémétrie, l'explication de sélection, le Trust Gap et le certificat. Les deux
+   options de configuration restent additives et désactivent le Trust Gap par défaut.
+2. Générer `selection_explanation.json` depuis les essais persistés et la règle
+   existante de `select_finalist`, avec provenance explicite pour chaque contexte.
+3. Mesurer autour du contrôleur et de la finalisation, sans changer `BudgetManager`,
+   le scheduler ni la sélection, puis écrire `runtime_telemetry.json`.
+4. Compiler `trust_certificate.json` et `trust_certificate.html` à partir du
+   manifeste, de SQLite, des contrats précédents et de la validation d'artefacts.
+   Le statut sera une fonction pure des contrôles persistés.
+5. Exécuter l'Observed Trust Gap uniquement après sélection, dans le namespace
+   `trust_gap/`, avec le même algorithme, les mêmes paramètres et les folds persistés,
+   mais en restaurant seulement les colonnes de risque disponibles. Ses essais et
+   prédictions ne seront jamais écrits dans les tables ou CSV de recherche.
+6. Exposer `automl trust`, les options additives de `fit`/`demo`, puis intégrer les
+   artefacts au rapport et à la démonstration.
+7. Ajouter les tests ciblés, exécuter les 394 tests historiques et toutes les gates,
+   puis refaire l'installation et la démo depuis un clone temporaire de la branche.
+
+### Décisions de compatibilité
+
+- Aucune migration SQLite n'est planifiée : les nouveaux fichiers sont enregistrés
+  dans la table d'artefacts existante et les données diagnostiques restent séparées.
+- `manifest_version`, `PipelineSpec`, le leaderboard et les tables d'essais restent
+  inchangés. Les anciens runs restent lisibles ; leur certificat sera partiel et
+  marquera les champs absents comme indisponibles.
+- `budget_seconds` et `BudgetManager` gardent leur comportement. La nouvelle
+  télémétrie observe les instants de lancement/arrêt et distingue la finalisation.
+- Le Trust Gap est désactivé par défaut, n'est jamais transmis à Optuna ou à
+  `select_finalist`, et sera abandonné si son intégration exige une modification du
+  scheduler, de la CV ou de la reprise.
+
+### Risques techniques surveillés
+
+- éviter une dépendance circulaire entre le manifeste et les hashes du certificat ;
+  les chemins sont annoncés dans le manifeste, puis les artefacts sont enregistrés
+  dans un ordre déterministe avant l'enregistrement final du manifeste ;
+- un run sans prédictions persistées ne permet pas d'affirmer un replay : le champ et
+  le statut doivent alors rester explicitement incomplets ;
+- une comparaison Trust Gap peut être invalide ou dépasser son timeout : elle doit
+  produire `NOT_COMPUTED`, jamais un score partiel ;
+- les profils `balanced` et `fast` sélectionnent par utilité multi-objectif, pas par
+  score seul : l'explication doit citer cette règle exacte ;
+- le coût diagnostique de la démo doit être mesuré et rester hors du budget de
+  recherche principal.
+
+### État d'implémentation Trust Layer
+
+- Trust Certificate : terminé. `trust_certificate.json` et
+  `trust_certificate.html` sont compilés uniquement depuis le manifeste, SQLite et
+  les artefacts vérifiés. Les quatre statuts sont dérivés par une fonction pure ; le
+  rendu contient la mention obligatoire « self-verified » et la limite de
+  non-certification externe.
+- Why this pipeline won : terminé. `selection_explanation.json` réapplique la règle
+  existante de `select_finalist`, refuse tout ID sélectionné divergent et associe une
+  provenance à chaque contexte facultatif.
+- Budget/runtime telemetry : terminé. `runtime_telemetry.json` sépare recherche,
+  finalisation et total, persiste les compteurs et le motif d'arrêt, et cumule le
+  temps actif après reprise sans facturer le temps d'arrêt du processus.
+- Observed Trust Gap : terminé sans modification du scheduler, d'Optuna, du
+  leaderboard ou des tables d'essais. Le diagnostic réutilise le PipelineSpec, la
+  fidélité, les folds et les seeds d'exécution persistés, restaure uniquement les
+  colonnes de risque exécutables et écrit sous `trust_gap/`. Toute comparaison non
+  comparable ou interrompue donne `NOT_COMPUTED`.
+- CLI/rapport : `automl trust`, les options additives de `fit` et `demo`, le lien
+  relatif depuis `report.html`, le résumé compact et les sections Trust Layer sont
+  connectés. Le Trust Gap reste désactivé par défaut et n'est activé que pour le
+  scénario de fuite de la démo.
+- Compatibilité : aucune migration SQLite ni montée de version destructive. Les
+  anciens payloads de configuration sans les deux nouveaux champs prennent les
+  valeurs sûres `False` et `30`; un run sans artefacts Trust Layer reste lisible et
+  reçoit un certificat partiel avec les données absentes marquées indisponibles.
+
+### Tests ciblés Trust Layer exécutés
+
+Campagne réelle du 2026-07-18 :
+
+| Commande | Statut | Résultat |
+|---|---:|---|
+| `uv run ruff check <sources et tests Trust Layer>` | PASS | aucun diagnostic |
+| `uv run pyright src/autonomous_automl` | PASS | 0 erreur, 0 avertissement |
+| `uv run pytest -q tests/unit/test_trust_contracts.py tests/unit/test_runtime_telemetry.py tests/unit/test_selection_explanation.py tests/unit/test_trust_gap.py tests/unit/test_search_controller.py tests/integration/test_trust_layer.py tests/integration/test_public_workflow.py` | PASS | 68/68 |
+
+Ces tests couvrent les statuts, JSON/HTML déterministes, chemins confinés,
+corruptions modèle/certificat, métriques à maximiser et minimiser, gap positif et
+négatif, timeout, reproductibilité des prédictions diagnostiques, invariance du
+leaderboard et du PipelineSpec, règle/tie-breaker exacts, motifs d'arrêt, overshoot,
+finalisation hors budget, reprise transactionnelle, CLI, rapport et run ancien.
+Les deux dernières démos Trust Layer locales complètes ont terminé en 16,64 et
+19,92 s, avec un maximum de 231 976 KiB de RSS. La dernière a produit 65 fichiers
+(1 966 131 octets) : les certificats classification et
+régression sont `SELF_VERIFIED`, celui de fuite est
+`SELF_VERIFIED_WITH_WARNINGS`, et les trois replays sont `PASS`. Le Trust Gap de
+fuite a pris entre 0,214552 et 0,408520 s et a persisté un score brut de 1,0, un score vérifié de
+0,837941 et un Observed Trust Gap de +0,162059. Les nouveaux certificats JSON/HTML
+mesurent respectivement 5 400/8 400, 5 283/8 259 et 6 922/10 043 octets sur le
+dernier run. `automl trust` a ensuite revalidé le scénario de fuite en 1,11 s : intégrité `PASS`,
+replay `PASS` et mêmes score, gap et durées persistées. Les six HTML produits ont
+été analysés : tous leurs liens sont relatifs et existants.
+
+### Gates locales Trust Layer
+
+Exécution réelle le 2026-07-18 avant le test en clone neuf :
+
+| Commande | Statut | Durée murale | Résultat / avertissement |
+|---|---:|---:|---|
+| `uv sync --frozen` | PASS | 0,01 s | 74 paquets contrôlés ; aucun avertissement |
+| `uv run pytest` | PASS | 35,42 s | 451/451 en 34,64 s pytest ; aucun avertissement |
+| `uv run ruff check .` | PASS | 0,03 s | aucun diagnostic |
+| `uv run ruff format --check .` | PASS | 0,03 s | 109 fichiers conformes |
+| `uv run pyright` | PASS | 8,05 s | 0 erreur, 0 avertissement |
+| `uv run automl --help` | PASS | 1,18 s | neuf commandes publiques, dont `trust` |
+| `uv run automl demo` | PASS | 19,92 s | trois scénarios et trois certificats PASS ; pic RSS 227 812 KiB |
+| `uv run automl trust runs/build-week-demo-20260718T210858Z/leakage` | PASS | 1,11 s | `SELF_VERIFIED_WITH_WARNINGS`, intégrité/replay PASS |
 
 ## Audit adversarial RC — PASS au 2026-07-18
 

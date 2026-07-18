@@ -88,6 +88,33 @@ release presentation, made post-neutralization scoring explicit in the report,
 removed documentation overclaims, and prepared the repository for a commit-backed
 fresh-clone gate. No M11, M14, notebook, or web feature was added during this work.
 
+### Trust Layer extension
+
+After the v0.1.0 release candidate was validated, the project owner authorized one
+isolated extension with exactly four components. Codex first audited the existing
+manifest, SQLite registry, artifact hashes, validation replay and report, then
+documented a compatibility-first plan on `feat/trust-layer`.
+
+Codex implemented versioned contracts and artifact-backed JSON/HTML for a
+Self-verified trust certificate, a diagnostic explanation that reuses the existing
+selection rule, and observation-only budget/runtime telemetry. It added the
+optional Observed Trust Gap after finalist selection, outside Optuna and the main
+trial registry. During a real smoke run, the raw diagnostic was initially rejected
+by the production identifier compatibility gate. Codex preserved that gate for
+search and allowed only already-recorded risk columns through a diagnostic-only
+profile. It then identified a subtler reproducibility issue: changing exclusions
+changes the PipelineSpec fingerprint and therefore normal fold seeds. The final
+diagnostic explicitly reuses the persisted execution seeds instead.
+
+The extension added targeted tests for deterministic status derivation, HTML/JSON,
+path confinement, corruption, metric direction, negative and positive gaps,
+timeouts, selection/tie-breaker fidelity, runtime overshoot, interruption/resume,
+old-run loading, CLI output, and strict leaderboard/PipelineSpec isolation. The
+measured complete demo took 16.76 seconds; the leakage diagnostic itself took
+0.225 seconds and recorded a +0.162059 Observed Trust Gap. No scheduler, Optuna
+objective, leaderboard rule, final selector, M11, M14, certified notebook, web UI,
+or model family was added or changed.
+
 ## Decisions accelerated or improved by Codex
 
 - Reuse the tested M0–M9 services and add a thin public orchestration layer.
@@ -102,6 +129,11 @@ fresh-clone gate. No M11, M14, notebook, or web feature was added during this wo
   actual startup bottleneck.
 - State that the notebook is deferred instead of creating an example-like notebook
   that would violate the project's reproducibility claim.
+- Derive certificate status from explicit evidence instead of narrative judgment.
+- Reapply the production selector and reject an explanation if its winner differs.
+- Reuse persisted fold execution seeds for the post-selection raw comparison.
+- Keep Trust Gap artifacts under a separate namespace and verify that the main
+  SQLite trials, leaderboard bytes, and selected PipelineSpec remain unchanged.
 
 ## GPT-5.6 Sol disclosure
 

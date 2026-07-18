@@ -128,7 +128,14 @@ def _leakage(rng: np.random.Generator) -> None:
     train["target_copy"] = target
     train["approved_after_review"] = target
     train["outcome"] = target
+    test = _features(rng, 32, start=50_000).drop(columns=["row_id"])
+    test.insert(0, "customer_id", [f"new-customer-{index:04d}" for index in range(len(test))])
+    # These post-outcome fields deliberately remain in the raw schema. The final
+    # PipelineSpec must exclude them, so their values cannot affect inference.
+    test["target_copy"] = 0
+    test["approved_after_review"] = 0
     _write_frame("leakage_train.csv", train)
+    _write_frame("leakage_test.csv", test)
     _write_json(
         "leakage_config.json",
         {
@@ -138,6 +145,7 @@ def _leakage(rng: np.random.Generator) -> None:
             "budget_seconds": 6,
             "random_seed": SEED,
             "n_jobs": 1,
+            "test_path": "examples/leakage_test.csv",
             "output_dir": "runs/demo-leakage",
             "trial_timeout_seconds": 3,
         },

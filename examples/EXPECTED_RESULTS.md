@@ -14,11 +14,20 @@ suivants doivent toujours être vrais :
 - le scénario classification est d'abord interrompu après deux essais, puis repris
   sans suppression de ces essais ;
 - chaque run terminé contient `best_pipeline.joblib`, `best_pipeline_spec.json`,
-  `manifest.json`, `leaderboard.csv`, `trials.csv`, `report.html` et son registre
-  SQLite ;
+  `manifest.json`, `leaderboard.csv`, `trials.csv`, `runtime_telemetry.json`,
+  `selection_explanation.json`, `trust_certificate.json`,
+  `trust_certificate.html`, `report.html` et son registre SQLite ;
 - la validation finale affiche `PASS` pour le chargement du modèle et, lorsque le
   fichier test existe, pour la reproduction des prédictions.
+- le Trust Gap reste séparé du leaderboard et du registre principal ; sur le
+  scénario de fuite il est soit `COMPUTED` avec protocole/prédictions persistés,
+  soit `NOT_COMPUTED` avec une raison explicite ;
+- les certificats classification et régression sont `SELF_VERIFIED` ; celui du
+  scénario de fuite est `SELF_VERIFIED_WITH_WARNINGS` parce que les findings
+  neutralisés restent visibles comme avertissements.
 
-Lors des gates RC (Linux, Python 3.12, un worker de modèle), le scénario complet a
-pris entre 16,21 et 19,53 secondes avec un budget nominal de 6 secondes par run et
-un pic RSS d'environ 225 MiB. Les performances exactes dépendent de la machine.
+Lors des gates Trust Layer (Linux, Python 3.12, un worker de modèle), le scénario
+complet a pris entre 16,64 et 19,92 secondes avec un budget de recherche nominal de
+6 secondes par run et un pic RSS maximal de 231 976 KiB. Le Trust Gap de fuite a
+pris entre 0,215 et 0,409 seconde et a enregistré 1,000000 brut, 0,837941 vérifié et
++0,162059 de gap. Les performances et scores exacts dépendent de la machine.

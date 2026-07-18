@@ -12,6 +12,7 @@ from autonomous_automl.contracts import (
     FidelitySpec,
     MetricName,
     PipelineSpec,
+    SearchStopReason,
     TaskType,
     TrialResult,
     TrialStatus,
@@ -142,6 +143,7 @@ class SearchController:
         self._budget_clock = budget_clock
         self._retryable_trials = sorted(retryable_trials, key=lambda trial: trial.sequence_number)
         self.trial_completed_callback = trial_completed_callback
+        self.stop_reason: SearchStopReason | None = None
 
         self._validate_components()
         self._validate_retries()
@@ -162,6 +164,7 @@ class SearchController:
         generation_failures = 0
         unavailable_families: set[str] = set()
         generation_failure_limit = len(self.optimizers) * self.allocator.failure_threshold
+        self.stop_reason = None
 
         while max_trials is None or existing_count + len(completed_here) < max_trials:
             retry = self._retryable_trials[0] if self._retryable_trials else None
@@ -179,6 +182,7 @@ class SearchController:
             phase = _phase_for_fidelity(next_fidelity)
             timeout = self._timeout_for(phase)
             if timeout is None:
+                self.stop_reason = SearchStopReason.BUDGET_EXHAUSTED
                 break
 
             if retry is not None:
@@ -220,6 +224,7 @@ class SearchController:
                 self._reconcile_duplicate(work, reservation.trial_id)
                 existing_count = len(self.store.list_trials(self.run_id))
                 if reservation.candidate_key in duplicate_keys:
+                    self.stop_reason = SearchStopReason.SEARCH_SPACE_EXHAUSTED
                     break
                 duplicate_keys.add(reservation.candidate_key)
                 continue
@@ -255,6 +260,8 @@ class SearchController:
             if self.trial_completed_callback is not None:
                 self.trial_completed_callback(result, self.budget)
 
+        if self.stop_reason is None:
+            self.stop_reason = SearchStopReason.CONTROLLER_STOPPED
         return completed_here
 
     def _retry_work(self, retry: RetryableTrial) -> _WorkItem:

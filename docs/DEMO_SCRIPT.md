@@ -1,24 +1,22 @@
-# Build Week video script — 2:45 target
+# Build Week video script — 2:38 target
 
-All spoken copy below is intentionally in natural English. Prepare the environment
-off camera with `uv sync --frozen`, use a terminal at least 110 columns wide, and
-ensure `runs/video-demo` does not exist.
+All spoken copy below is exact, short, and intended to be easy to pronounce in
+English. Prepare off camera with `uv sync --frozen`. Use a terminal at least 110
+columns wide and ensure `runs/video-demo` does not exist.
 
-## 0:00–0:18 — Problem
+## 0:00–0:17 — Problem
 
 **On screen:** README title and product statement.
 
 **Say:**
 
 > Most AutoML systems optimize a score. Autonomous AutoML verifies whether that
-> score deserves to be trusted. A target leak, preprocessing outside a fold, or a
-> stale saved model can make a great score meaningless.
+> score deserves to be trusted. A target leak or a stale saved model can make a
+> great score meaningless.
 
-**Transition:** scroll once to the one-command demonstration.
+**Transition:** move to the terminal.
 
-## 0:18–0:48 — Launch the complete path
-
-**On screen:** terminal.
+## 0:17–0:45 — Launch the complete path
 
 **Run:**
 
@@ -28,51 +26,49 @@ uv run automl demo --output-root runs/video-demo
 
 **Say while it runs:**
 
-> One local command runs three small, deterministic scenarios. The terminal shows
-> the active stage, budget remaining, completed and failed trials, and the current
-> search objective. Classification deliberately checkpoints after two trials and
-> resumes from SQLite without repeating them.
+> One local command runs classification, regression, and a synthetic leakage
+> attack. The terminal shows the stage, search budget, trial counts, and current
+> objective. Classification checkpoints after two trials, then resumes from
+> SQLite without repeating them.
 
-**Expected screen:** the three scenario headings, `Checkpoint persisted`, the
-summary table, a top-five leaderboard, leakage proof, and three `PASS` checks. The
-final audited commands took 16.21–19.53 seconds.
+**Expected screen:** three scenario headings, `Checkpoint persisted`, the final
+summary, leakage table, leaderboard, and `TRUST SUMMARY`. The audited Trust Layer
+demo took 16.76 seconds.
 
-## 0:48–1:15 — Leakage evidence
+## 0:45–1:12 — Leakage and Observed Trust Gap
 
-**On screen:** keep the final leakage-proof table visible, then run:
-
-```bash
-uv run automl inspect runs/video-demo/leakage
-```
+**On screen:** keep `TRUST SUMMARY` visible.
 
 **Say:**
 
-> This synthetic CSV contains an exact target copy, a post-outcome copy, and a
-> unique customer identifier. The engine records the reason and action, excludes
-> all three before pipeline generation, and uses persisted stratified folds. The
-> displayed score is post-neutralization. We do not invent a contaminated score.
+> The raw CSV contains two target copies and a unique customer identifier. The
+> engine excludes them before search. Every main leaderboard score is verified
+> after neutralization. After selection, a separate diagnostic evaluates the same
+> pipeline and folds with the recorded risk columns restored. Here, the raw score
+> is one, the verified score is about zero point eight four, and the Observed Trust
+> Gap is about plus zero point one six. This is apparent inflation under this
+> protocol, not a universal causal claim.
 
-**Transition:** switch back to the demo summary or the leaderboard command.
+**Transition:** show the classification leaderboard, then the trust command.
 
-## 1:15–1:38 — Search and leaderboard
+## 1:12–1:35 — Search and why the pipeline won
 
 **Run:**
 
 ```bash
 uv run automl leaderboard runs/video-demo/classification-resumed --limit 5
+uv run automl trust runs/video-demo/leakage
 ```
 
 **Say:**
 
-> Compatible PipelineSpecs combine fold-local preprocessing with several
-> scikit-learn model families. Optuna suggests parameters, while multi-fidelity and
-> adaptive allocation spend the short budget. A naive baseline is always included,
-> and a candidate failure remains in the registry instead of ending the run.
+> Optuna, multi-fidelity search, and adaptive family allocation evaluate compatible
+> PipelineSpecs. A naive baseline is always present. The certificate explains why
+> the final pipeline won by repeating the real selection rule. Supporting facts
+> name their persisted source. The Trust Gap never enters this leaderboard or the
+> selection rule.
 
-## 1:38–2:00 — Resume and artifact proof
-
-**On screen:** show the run directory, including `registry.sqlite3`,
-`best_pipeline_spec.json`, `best_pipeline.joblib`, and `predictions.csv`.
+## 1:35–1:57 — Resume, budget, and artifact proof
 
 **Run:**
 
@@ -82,53 +78,52 @@ uv run automl validate-artifacts runs/video-demo/classification-resumed
 
 **Say:**
 
-> Validation checks SQLite, source hashes, every registered artifact, and the final
-> Joblib before loading it. The loaded pipeline replays the test CSV, and its
-> predictions must match the persisted file within the recorded tolerance.
+> Validation checks SQLite, source hashes, registered artifacts, and Joblib before
+> loading. It replays the test CSV and compares saved predictions. Search time and
+> finalization time are recorded separately. The configured value is a
+> search-launch budget, not a hard total-runtime promise.
 
-## 2:00–2:24 — Standalone report
+## 1:57–2:20 — Certificate and full report
 
-**Open:** `runs/video-demo/leakage/report.html` directly in a browser.
+**Open first:** `runs/video-demo/leakage/trust_certificate.html`.
 
-**On screen:** dataset and validation, leakage diagnostics, post-neutralization
-leaderboard, best PipelineSpec, failed trials, then artifact links.
+**Then open:** `runs/video-demo/leakage/report.html`.
 
 **Say:**
 
-> This standalone HTML is generated only from the persisted manifest, SQLite trial
-> registry, and artifact inventory. It explains the validation plan, exclusions,
-> failures, selected PipelineSpec, budget, and reproduction commands without a
-> server.
+> This Self-verified trust certificate is generated only from recorded run
+> evidence. It shows validation, exclusions, replay, runtime, Trust Gap, warnings,
+> and limits. It is not an external, security, or regulatory certification. The
+> full standalone report adds the dataset profile, trials, leaderboard, selected
+> PipelineSpec, and reproduction commands. Neither file needs a server.
 
-## 2:24–2:38 — Codex and GPT-5.6 disclosure
+## 2:20–2:33 — Codex disclosure
 
 **Open:** `docs/CODEX_COLLABORATION.md`.
 
 **Say:**
 
-> Codex implemented and release-audited the repository, measured real demos, and
-> corrected failures against the gates. The available record does not establish a
-> separate GPT-5.6 Sol session, so the submission makes no unsupported attribution.
+> This is a solo project assisted by Codex. Codex implemented and audited the
+> repository, including this Trust Layer and its adversarial tests. The available
+> record does not prove a separate GPT-5.6 Sol session, so I make no unsupported
+> attribution.
 
-## 2:38–2:45 — Close
+## 2:33–2:38 — Close
 
-**Return to:** README product statement.
+**Return to:** the certificate status or README statement.
 
 **Say:**
 
-> Autonomous AutoML does not just save a model. It saves the evidence needed to
-> decide whether the model can be trusted.
+> Autonomous AutoML returns a model, and the evidence needed to question its score.
 
 ## Backup plan
 
-- If dependency installation is slow, keep it off camera; the video starts after
-  the already documented `uv sync --frozen` step.
-- If the demo exceeds 30 seconds, let it finish and use a transparent time cut in
-  the recording. Do not cut away failures or the final `PASS` summary.
-- If Windows process startup causes a short-budget failure, rerun before recording
-  with `uv run automl demo --budget 15s --output-root runs/video-demo`.
-- If browser launch integration is unavailable, open
-  `runs/video-demo/leakage/report.html` using the file manager; no server is needed.
-- Keep a completed `runs/video-demo` only as an on-camera fallback for the inspect,
-  leaderboard, validation, and report segments. State clearly if the live search
-  was recorded separately.
+- Keep dependency installation off camera; it is already documented and tested.
+- If the live demo takes longer than 30 seconds, let it finish and use a transparent
+  time cut. Never hide a failure or omit the final summary.
+- If Windows process startup exhausts the short allowance, rerun with
+  `uv run automl demo --budget 15s --output-root runs/video-demo`.
+- Keep one completed `runs/video-demo` as a clearly disclosed fallback for the
+  leaderboard, trust, validation, certificate, and report screens.
+- If a browser file URL does not open from the terminal, use the file manager. Both
+  HTML files work without a server.

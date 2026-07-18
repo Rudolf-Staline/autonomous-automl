@@ -17,6 +17,23 @@ from autonomous_automl.contracts.evaluation import FoldResult, TrialResult
 from autonomous_automl.contracts.leakage import LeakageFinding, LeakageReport
 from autonomous_automl.contracts.pipeline import FidelitySpec, PipelineSpec
 from autonomous_automl.contracts.run import NotebookValidation, RunManifest, RunResult
+from autonomous_automl.contracts.trust import (
+    MetricDirection,
+    ObservedTrustGap,
+    PipelineSelectionExplanation,
+    ResumeEvidence,
+    RuntimeTelemetry,
+    SearchStopReason,
+    SelectionContextItem,
+    SourceHashEvidence,
+    TrustCertificate,
+    TrustCertificateStatus,
+    TrustGapProtocol,
+    TrustGapStatus,
+    VerificationEvidence,
+    VerificationStatus,
+    derive_certificate_status,
+)
 from autonomous_automl.contracts.validation import FoldAssignment, ValidationAudit, ValidationPlan
 
 __all__ = [
@@ -31,17 +48,32 @@ __all__ = [
     "LeakageFinding",
     "LeakageFindingType",
     "LeakageReport",
+    "MetricDirection",
     "MetricName",
     "NotebookValidation",
     "NotebookValidationStatus",
+    "ObservedTrustGap",
     "OptimizationProfile",
+    "PipelineSelectionExplanation",
     "PipelineSpec",
+    "ResumeEvidence",
     "RunManifest",
     "RunResult",
     "RunStatus",
+    "RuntimeTelemetry",
+    "SearchStopReason",
+    "SelectionContextItem",
+    "SourceHashEvidence",
     "TaskType",
     "TrialResult",
     "TrialStatus",
+    "TrustCertificate",
+    "TrustCertificateStatus",
+    "TrustGapProtocol",
+    "TrustGapStatus",
     "ValidationAudit",
     "ValidationPlan",
+    "VerificationEvidence",
+    "VerificationStatus",
+    "derive_certificate_status",
 ]

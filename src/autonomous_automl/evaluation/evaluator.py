@@ -7,6 +7,7 @@ import multiprocessing as mp
 import re
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing.connection import Connection
@@ -83,6 +84,7 @@ class PipelineEvaluator:
         metric: MetricName | str = MetricName.AUTO,
         *,
         timeout_seconds: float | None = None,
+        execution_seeds: Sequence[int] | None = None,
     ) -> EvaluationOutcome:
         """Run folds and contain candidate errors after validating global inputs."""
         _validate_inputs(
@@ -116,18 +118,28 @@ class PipelineEvaluator:
         peak_memory_mb = _resident_memory_mb()
         spec_fingerprint = pipeline_fingerprint(pipeline_spec)
         fidelity_fingerprint = fidelity.to_json()
+        fixed_seeds = None if execution_seeds is None else list(execution_seeds)
+        expected_seed_count = len(fidelity.seeds) * fidelity.n_folds
+        if fixed_seeds is not None and len(fixed_seeds) != expected_seed_count:
+            raise ValueError("execution_seeds must match every fidelity-seed/fold evaluation")
+        execution_index = 0
 
         try:
             for fidelity_seed in fidelity.seeds:
                 for fold in validation_plan.folds[: fidelity.n_folds]:
                     _enforce_timeout(started_clock, timeout_seconds)
-                    execution_seed = derive_seed(
-                        pipeline_spec.random_seed,
-                        spec_fingerprint,
-                        fidelity_fingerprint,
-                        fidelity_seed,
-                        fold.fold_index,
+                    execution_seed = (
+                        fixed_seeds[execution_index]
+                        if fixed_seeds is not None
+                        else derive_seed(
+                            pipeline_spec.random_seed,
+                            spec_fingerprint,
+                            fidelity_fingerprint,
+                            fidelity_seed,
+                            fold.fold_index,
+                        )
                     )
+                    execution_index += 1
                     execution_spec = _execution_spec(pipeline_spec, fidelity, execution_seed)
                     validation_positions = np.asarray(fold.validation_positions, dtype=np.int64)
                     training_positions = FidelitySampler.sample_training_positions(
