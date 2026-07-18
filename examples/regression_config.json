@@ -1,0 +1,12 @@
+{
+  "budget_seconds": 6,
+  "id_column": "row_id",
+  "metric": "rmse",
+  "n_jobs": 1,
+  "output_dir": "runs/demo-regression",
+  "random_seed": 42,
+  "target": "annual_spend",
+  "task": "regression",
+  "test_path": "examples/regression_test.csv",
+  "trial_timeout_seconds": 3
+}

@@ -1,0 +1,12 @@
+{
+  "budget_seconds": 6,
+  "id_column": "row_id",
+  "metric": "auto",
+  "n_jobs": 1,
+  "output_dir": "runs/demo-classification",
+  "random_seed": 42,
+  "target": "churned",
+  "task": "auto",
+  "test_path": "examples/classification_test.csv",
+  "trial_timeout_seconds": 3
+}

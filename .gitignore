@@ -1,0 +1,28 @@
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.pyright/
+.ipynb_checkpoints/
+
+# Local runs and generated artifacts
+runs/
+*.sqlite
+*.sqlite3
+*.db
+*.joblib
+*.parquet
+logs/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

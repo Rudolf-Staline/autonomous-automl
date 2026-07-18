@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autonomous-automl"
+version = "0.1.0"
+description = "A reproducible, leakage-aware AutoML engine for tabular CSV data."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Autonomous AutoML contributors" }]
+keywords = ["automl", "machine-learning", "tabular", "scikit-learn"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "joblib>=1.4",
+  "jinja2>=3.1",
+  "nbclient>=0.10",
+  "nbformat>=5.10",
+  "optuna>=4.2,<5",
+  "pandas>=2.2,<4",
+  "psutil>=6",
+  "pydantic>=2.10,<3",
+  "rich>=13.9,<15",
+  "scikit-learn>=1.6,<2",
+  "typer>=0.15,<1",
+]
+
+[project.optional-dependencies]
+boosting = [
+  "catboost>=1.2.8",
+  "lightgbm>=4.6",
+  "xgboost>=2.1",
+]
+parquet = ["pyarrow>=18"]
+
+[dependency-groups]
+dev = [
+  "ipykernel>=6.29",
+  "pyright>=1.1.390",
+  "pytest>=8.3",
+  "pytest-cov>=6",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+automl = "autonomous_automl.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autonomous_automl"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "benchmark: opt-in benchmark tests",
+  "integration: integration tests",
+  "notebook: notebook execution tests",
+]
+filterwarnings = [
+  # Joblib 1.5.3 mutates ndarray.shape while loading; NumPy 2.5 deprecates it.
+  # This is an upstream implementation warning and does not affect artifact values.
+  "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:joblib.numpy_pickle",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests", "scripts", "benchmarks"]
+extend-exclude = ["runs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "PT", "RUF", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.pyright]
+include = ["src", "scripts"]
+exclude = ["runs", ".venv"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"

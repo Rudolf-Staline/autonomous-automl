@@ -1,0 +1,10 @@
+{
+  "budget_seconds": 6,
+  "metric": "roc_auc",
+  "n_jobs": 1,
+  "output_dir": "runs/demo-leakage",
+  "random_seed": 42,
+  "target": "outcome",
+  "task": "binary_classification",
+  "trial_timeout_seconds": 3
+}
