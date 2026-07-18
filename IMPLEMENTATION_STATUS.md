@@ -5,10 +5,10 @@ milestone et chaque campagne de validation.
 
 ## Statut global
 
-- État : release v0.1.0 stable ; Trust Layer implémentée, gates locales réussies
+- État : release v0.1.0 stable ; Trust Layer terminée, gates locales et clone neuf réussis
 - Périmètre actif : Trust Certificate, explication de sélection, télémétrie et Trust Gap
 - Branche active : `feat/trust-layer`
-- Chantier actif : commit local de validation puis gates depuis un clone neuf
+- Chantier actif : terminé ; attente d'autorisation de merge
 - Dernière mise à jour : 2026-07-18
 - Tests historiques au point de branchement : 394 réussis ; suite courante : 451 réussis
 
@@ -150,6 +150,42 @@ Exécution réelle le 2026-07-18 avant le test en clone neuf :
 | `uv run automl --help` | PASS | 1,18 s | neuf commandes publiques, dont `trust` |
 | `uv run automl demo` | PASS | 19,92 s | trois scénarios et trois certificats PASS ; pic RSS 227 812 KiB |
 | `uv run automl trust runs/build-week-demo-20260718T210858Z/leakage` | PASS | 1,11 s | `SELF_VERIFIED_WITH_WARNINGS`, intégrité/replay PASS |
+
+### Gates Trust Layer depuis un clone Git neuf
+
+Source : commit d'implémentation `c0a8a9d546966f952152c74498bfe21198886acb`,
+cloné avec `git clone --no-local --branch feat/trust-layer` vers
+`/tmp/autonomous-automl-trust-clone.lMzWm4/repo`. Le clone ne contenait aucune
+`.venv` et `uv sync --frozen` a utilisé un cache vide dédié.
+
+| Commande | Statut | Durée murale | Résultat / avertissement |
+|---|---:|---:|---|
+| `git clone --no-local --branch feat/trust-layer …` | PASS | 0,09 s | HEAD exact `c0a8a9d` ; arbre suivi propre |
+| `uv sync --frozen` | PASS | 60,04 s | Python 3.12.13 ; 74 paquets téléchargés/installés ; aucun avertissement |
+| `uv run pytest` | PASS | 37,17 s | 451/451 en 36,14 s pytest ; aucun avertissement |
+| `uv run ruff check .` | PASS | 0,04 s | aucun diagnostic |
+| `uv run ruff format --check .` | PASS | 0,04 s | 109 fichiers conformes |
+| `uv run pyright` | PASS | 7,47 s | 0 erreur, 0 avertissement |
+| `uv run automl --help` | PASS | 1,15 s | neuf commandes publiques, dont `trust` |
+| `uv run automl demo` | PASS | 16,65 s | trois scénarios et certificats PASS ; pic RSS 230 944 KiB |
+| `uv run automl trust runs/build-week-demo-20260718T211927Z/leakage` | PASS | 1,13 s | `SELF_VERIFIED_WITH_WARNINGS`, intégrité/replay PASS |
+
+La démo du clone a produit 65 fichiers (3 547 930 octets). Les certificats
+JSON/HTML mesurent 5 428/8 379 octets pour classification, 5 323/8 260 pour
+régression et 6 958/10 045 pour fuite. Le diagnostic fuite a pris 0,242866 s :
+score brut 1,000000, score vérifié 0,837941 et Observed Trust Gap +0,162059. La
+télémétrie persistée indique 4,316163 s de recherche, 0,286300 s de finalisation,
+4,602463 s au total et `budget_exhausted`. Les six HTML ont été analysés : aucun
+lien absolu ou manquant et aucune valeur brute `None`, `NaN` ou `<NA>`.
+
+Les preuves d'isolation et de compatibilité sont exécutées dans cette même suite :
+`test_trust_gap_is_separate_and_does_not_change_leaderboard_or_selection` vérifie
+octet par octet le leaderboard et l'identité du `PipelineSpec` avant/après le
+diagnostic ; `test_legacy_shaped_run_remains_readable_and_gets_a_partial_certificate`
+vérifie un run sans champs Trust Layer. Les tests de reprise transactionnelle,
+corruption, déterminisme et refus de désérialisation invalide passent également.
+Après toutes les commandes, `git status --short --untracked-files=all` est vide ;
+seuls `.venv`, caches et `runs/`, tous ignorés, existent dans le clone.
 
 ## Audit adversarial RC — PASS au 2026-07-18
 

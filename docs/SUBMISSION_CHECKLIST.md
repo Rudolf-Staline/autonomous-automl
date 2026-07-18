@@ -43,10 +43,10 @@ project owner.
   from this repository/transcript.
 - [x] Fresh-clone commands pass: `uv sync --frozen` and `uv run automl demo`.
 - [x] Final release gates and timings copied into `IMPLEMENTATION_STATUS.md`.
-- [ ] Trust Layer branch gates and fresh-clone demo pass after the final commit.
-- [ ] `automl trust <demo-root>/leakage` displays the same status, score, gap and
+- [x] Trust Layer branch gates and fresh-clone demo pass after the implementation commit.
+- [x] `automl trust <demo-root>/leakage` displays the same status, score, gap and
   runtime values as `trust_certificate.json` and `report.html`.
-- [ ] Confirm the public demo certificate states that it is self-verified and not
+- [x] Confirm the demo certificate states that it is self-verified and not
   an external, regulatory, or security certification.
 
 ## Required Codex session evidence
