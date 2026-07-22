@@ -42,14 +42,20 @@ jobs:
           > pytest-feature-selection.log 2>&1
 
       - name: Run full test suite
-        run: uv run pytest -q --tb=short -x > pytest-full.log 2>&1
+        run: >-
+          uv run pytest -q --tb=short -x
+          --basetemp=.pytest-ci-tmp
+          > pytest-full.log 2>&1
 
-      - name: Upload pytest failure logs
+      - name: Upload pytest failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: pytest-failure-logs
-          path: pytest-*.log
+          name: pytest-failure-diagnostics
+          path: |
+            pytest-*.log
+            .pytest-ci-tmp
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
 
