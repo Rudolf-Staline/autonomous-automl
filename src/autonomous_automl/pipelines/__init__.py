@@ -5,13 +5,19 @@ from autonomous_automl.pipelines.compatibility import (
     check_pipeline_compatibility,
     compatible_specs,
 )
-from autonomous_automl.pipelines.factory import build_model, build_pipeline, build_preprocessor
+from autonomous_automl.pipelines.factory import (
+    build_feature_selector,
+    build_model,
+    build_pipeline,
+    build_preprocessor,
+)
 from autonomous_automl.pipelines.fingerprint import pipeline_fingerprint
 from autonomous_automl.pipelines.grammar import PipelineGrammar, generate_initial_candidates
 
 __all__ = [
     "CompatibilityResult",
     "PipelineGrammar",
+    "build_feature_selector",
     "build_model",
     "build_pipeline",
     "build_preprocessor",
