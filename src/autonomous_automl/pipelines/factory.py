@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
-from sklearn.feature_selection import VarianceThreshold
+from sklearn.feature_selection import SelectPercentile, VarianceThreshold, f_classif, f_regression
 from sklearn.pipeline import Pipeline
 
 from autonomous_automl.components import (
@@ -13,7 +13,7 @@ from autonomous_automl.components import (
     build_datetime_transformer,
     build_numeric_transformer,
 )
-from autonomous_automl.contracts import DatasetProfile, PipelineSpec
+from autonomous_automl.contracts import DatasetProfile, PipelineSpec, TaskType
 from autonomous_automl.pipelines.compatibility import check_pipeline_compatibility
 from autonomous_automl.utils.errors import IncompatiblePipelineError
 
@@ -74,6 +74,19 @@ def build_preprocessor(
     )
 
 
+def build_feature_selector(spec: PipelineSpec) -> BaseEstimator | None:
+    """Build the fold-local selector recorded in the PipelineSpec."""
+    if spec.feature_selector is None:
+        return None
+    if spec.feature_selector == "variance":
+        return VarianceThreshold()
+    if spec.feature_selector in {"univariate_25", "univariate_50"}:
+        percentile = int(spec.feature_selector.rsplit("_", maxsplit=1)[1])
+        score_func = f_regression if spec.task == TaskType.REGRESSION else f_classif
+        return SelectPercentile(score_func=score_func, percentile=percentile)
+    raise IncompatiblePipelineError(f"unknown feature selector: {spec.feature_selector}")
+
+
 def build_model(
     spec: PipelineSpec,
     profile: DatasetProfile,
@@ -110,8 +123,9 @@ def build_pipeline(
     steps: list[tuple[str, object]] = [
         ("preprocessor", build_preprocessor(spec, profile, active_registry))
     ]
-    if spec.feature_selector == "variance":
-        steps.append(("selector", VarianceThreshold()))
+    selector = build_feature_selector(spec)
+    if selector is not None:
+        steps.append(("selector", selector))
     steps.append(
         (
             "model",
@@ -126,4 +140,4 @@ def build_pipeline(
     return Pipeline(steps)
 
 
-__all__ = ["build_model", "build_pipeline", "build_preprocessor"]
+__all__ = ["build_feature_selector", "build_model", "build_pipeline", "build_preprocessor"]
