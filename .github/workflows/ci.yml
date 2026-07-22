@@ -34,8 +34,14 @@ jobs:
       - name: Synchronize locked environment
         run: uv sync --frozen
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Run feature-selection regression tests
+        run: >-
+          uv run pytest -q --tb=short -x
+          tests/unit/test_feature_selection.py
+          tests/unit/test_optuna_template_evolution.py
+
+      - name: Run full test suite
+        run: uv run pytest -q --tb=short -x
 
       - name: Run Ruff lint
         run: uv run ruff check .
