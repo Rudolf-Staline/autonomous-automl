@@ -159,8 +159,7 @@ def _estimated_transformed_width(profile: DatasetProfile, categorical_encoder: s
     numeric_width = len(profile.numeric_columns) + len(profile.boolean_columns)
     if categorical_encoder == "one_hot":
         categorical_width = sum(
-            max(1, profile.cardinalities.get(column, 1))
-            for column in profile.categorical_columns
+            max(1, profile.cardinalities.get(column, 1)) for column in profile.categorical_columns
         )
     else:
         categorical_width = len(profile.categorical_columns)
