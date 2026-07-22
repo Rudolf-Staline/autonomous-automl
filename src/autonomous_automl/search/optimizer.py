@@ -302,8 +302,7 @@ class OptunaFamilyOptimizer:
         # exact ordered template universe recorded when it started, preserving both Optuna's
         # categorical distribution and deterministic candidate identities.
         self._templates[model_name] = {
-            fingerprint: current_templates[fingerprint]
-            for fingerprint in persisted_fingerprints
+            fingerprint: current_templates[fingerprint] for fingerprint in persisted_fingerprints
         }
 
     def _study_for_candidate(self, candidate: SearchCandidate) -> optuna.Study:
