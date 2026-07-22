@@ -28,7 +28,7 @@ def _make_problem(tmp_path: Path) -> tuple[pd.DataFrame, pd.Series, DatasetProfi
         {
             "numeric": [np.nan if index % 17 == 0 else float(index) for index in range(n_rows)],
             "signal": [float((index % 2) * 4 + index % 5) for index in range(n_rows)],
-            "city": [f"city-{index % 50}" for index in range(n_rows)],
+            "city": [f"city-{index % 90}" for index in range(n_rows)],
             "event_date": pd.date_range("2023-01-01", periods=n_rows, freq="D").astype(str),
             "target": [index % 2 for index in range(n_rows)],
         }
