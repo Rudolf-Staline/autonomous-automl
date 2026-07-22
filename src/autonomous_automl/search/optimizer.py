@@ -102,7 +102,6 @@ class OptunaFamilyOptimizer:
 
     def ask(self, fidelity: FidelitySpec) -> SearchCandidate:
         """Ask the least-explored model study for a new compatible candidate."""
-
         model_name = min(
             self.model_names,
             key=lambda name: (len(self._studies[name].trials), name),
@@ -169,7 +168,6 @@ class OptunaFamilyOptimizer:
 
     def tell(self, candidate: SearchCandidate, result: TrialResult) -> None:
         """Finish an Optuna trial, idempotently accepting an identical replay."""
-
         study = self._study_for_candidate(candidate)
         self._validate_result(candidate, result)
         expected_state = _trial_state(result.status)
@@ -191,7 +189,6 @@ class OptunaFamilyOptimizer:
         completed: Iterable[tuple[SearchCandidate, TrialResult]],
     ) -> None:
         """Replay stored terminal results without double-telling finished trials."""
-
         for candidate, result in completed:
             self.tell(candidate, result)
 
@@ -208,7 +205,6 @@ class OptunaFamilyOptimizer:
         fidelity: FidelitySpec,
     ) -> SearchCandidate | None:
         """Recover a persisted in-flight candidate from its Optuna study."""
-
         if not candidate_id.strip():
             raise ValueError("candidate_id must not be blank")
         matches: list[SearchCandidate] = []
@@ -272,18 +268,43 @@ class OptunaFamilyOptimizer:
         return grouped
 
     def _validate_study_identity(self, study: optuna.Study, model_name: str) -> None:
+        current_templates = self._templates[model_name]
         expected: dict[str, JsonValue] = {
             "family": self.family,
             "model_name": model_name,
             "dataset_hash": self.profile.dataset_hash,
             "random_seed": self.random_seed,
-            "template_fingerprints": list(self._templates[model_name]),
+            "template_fingerprints": list(current_templates),
         }
         identity = study.user_attrs.get("optimizer_identity")
         if identity is None:
             study.set_user_attr("optimizer_identity", expected)
-        elif identity != expected:
+            return
+        if not isinstance(identity, dict):
+            raise ResumeError("persisted Optuna study identity is malformed")
+
+        stable_keys = ("family", "model_name", "dataset_hash", "random_seed")
+        if any(identity.get(key) != expected[key] for key in stable_keys):
             raise ResumeError("persisted Optuna study identity does not match this optimizer")
+
+        persisted_fingerprints = identity.get("template_fingerprints")
+        if (
+            not isinstance(persisted_fingerprints, list)
+            or not persisted_fingerprints
+            or any(not isinstance(value, str) for value in persisted_fingerprints)
+            or len(persisted_fingerprints) != len(set(persisted_fingerprints))
+        ):
+            raise ResumeError("persisted Optuna template identity is malformed")
+        if any(fingerprint not in current_templates for fingerprint in persisted_fingerprints):
+            raise ResumeError("persisted Optuna template is unavailable in this version")
+
+        # Additive template evolution is safe only for new runs. A resumed study keeps the
+        # exact ordered template universe recorded when it started, preserving both Optuna's
+        # categorical distribution and deterministic candidate identities.
+        self._templates[model_name] = {
+            fingerprint: current_templates[fingerprint]
+            for fingerprint in persisted_fingerprints
+        }
 
     def _study_for_candidate(self, candidate: SearchCandidate) -> optuna.Study:
         if candidate.family != self.family:
