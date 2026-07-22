@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_selection import SelectPercentile, VarianceThreshold, f_classif, f_regression
@@ -74,6 +77,29 @@ def build_preprocessor(
     )
 
 
+def stable_f_classif(X: Any, y: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return ANOVA scores with impossible floating-point results repaired.
+
+    The theoretical F statistic is non-negative. Perfectly separating features can
+    nevertheless produce a very large negative finite value after scaling because the
+    within-class variance underflows below zero. Such values represent the same limiting
+    case as positive infinity and must rank first, while NaNs from constant features rank
+    last.
+    """
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        scores, pvalues = f_classif(X, y)
+    maximum = np.finfo(np.float64).max
+    stable_scores = np.asarray(scores, dtype=np.float64)
+    stable_scores = np.nan_to_num(
+        stable_scores,
+        nan=0.0,
+        posinf=maximum,
+        neginf=maximum,
+    )
+    stable_scores = np.where(stable_scores < 0.0, maximum, stable_scores)
+    return stable_scores, np.asarray(pvalues, dtype=np.float64)
+
+
 def build_feature_selector(spec: PipelineSpec) -> BaseEstimator | None:
     """Build the fold-local selector recorded in the PipelineSpec."""
     if spec.feature_selector is None:
@@ -82,7 +108,7 @@ def build_feature_selector(spec: PipelineSpec) -> BaseEstimator | None:
         return VarianceThreshold()
     if spec.feature_selector in {"univariate_25", "univariate_50"}:
         percentile = int(spec.feature_selector.rsplit("_", maxsplit=1)[1])
-        score_func = f_regression if spec.task == TaskType.REGRESSION else f_classif
+        score_func = f_regression if spec.task == TaskType.REGRESSION else stable_f_classif
         return SelectPercentile(score_func=score_func, percentile=percentile)
     raise IncompatiblePipelineError(f"unknown feature selector: {spec.feature_selector}")
 
@@ -140,4 +166,10 @@ def build_pipeline(
     return Pipeline(steps)
 
 
-__all__ = ["build_feature_selector", "build_model", "build_pipeline", "build_preprocessor"]
+__all__ = [
+    "build_feature_selector",
+    "build_model",
+    "build_pipeline",
+    "build_preprocessor",
+    "stable_f_classif",
+]
