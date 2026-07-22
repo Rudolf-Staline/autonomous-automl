@@ -39,9 +39,19 @@ jobs:
           uv run pytest -q --tb=short -x
           tests/unit/test_feature_selection.py
           tests/unit/test_optuna_template_evolution.py
+          > pytest-feature-selection.log 2>&1
 
       - name: Run full test suite
-        run: uv run pytest -q --tb=short -x
+        run: uv run pytest -q --tb=short -x > pytest-full.log 2>&1
+
+      - name: Upload pytest failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-failure-logs
+          path: pytest-*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run Ruff lint
         run: uv run ruff check .
