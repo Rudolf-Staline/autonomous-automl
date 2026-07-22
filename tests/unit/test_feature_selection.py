@@ -7,13 +7,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.feature_selection import SelectPercentile, VarianceThreshold, f_classif
+from sklearn.feature_selection import SelectPercentile, VarianceThreshold, f_regression
+from sklearn.metrics import roc_auc_score
 
 from autonomous_automl.components import ModelRegistry
 from autonomous_automl.contracts import AutoMLConfig, DatasetProfile, PipelineSpec, TaskType
 from autonomous_automl.data import load_dataset
 from autonomous_automl.pipelines import (
     PipelineGrammar,
+    build_feature_selector,
     build_pipeline,
     check_pipeline_compatibility,
     pipeline_fingerprint,
@@ -66,6 +68,23 @@ def _logistic_spec(feature_selector: str | None) -> PipelineSpec:
     )
 
 
+def _regression_spec(feature_selector: str | None) -> PipelineSpec:
+    return PipelineSpec(
+        family="linear",
+        task="regression",
+        numeric_imputer="mean",
+        numeric_scaler="standard",
+        categorical_imputer="constant",
+        categorical_encoder="ordinal",
+        datetime_transformer="calendar",
+        feature_selector=feature_selector,
+        model_name="ridge",
+        model_params={"alpha": 1.0},
+        excluded_columns=[],
+        random_seed=42,
+    )
+
+
 def _hist_gradient_boosting_spec(feature_selector: str | None) -> PipelineSpec:
     return PipelineSpec(
         family="hist_gradient_boosting",
@@ -109,7 +128,7 @@ def test_selectors_are_reconstructible_pipeline_steps(
     assert list(pipeline.named_steps) == ["preprocessor", "selector", "model"]
     assert isinstance(pipeline.named_steps["selector"], selector_type)
     if isinstance(pipeline.named_steps["selector"], SelectPercentile):
-        assert pipeline.named_steps["selector"].score_func is f_classif
+        assert pipeline.named_steps["selector"].score_func.__name__ == "stable_f_classif"
         assert pipeline.named_steps["selector"].percentile == int(selector_name.rsplit("_", 1)[1])
 
     fitted = pipeline.fit(X, y)
@@ -119,6 +138,61 @@ def test_selectors_are_reconstructible_pipeline_steps(
 
     np.testing.assert_allclose(fitted.predict_proba(inference), rebuilt.predict_proba(inference))
     assert pipeline_fingerprint(restored) == pipeline_fingerprint(specification)
+
+
+def test_regression_selector_uses_f_regression() -> None:
+    selector = build_feature_selector(_regression_spec("univariate_50"))
+
+    assert isinstance(selector, SelectPercentile)
+    assert selector.score_func is f_regression
+
+
+def test_stable_classification_score_keeps_a_perfect_scaled_feature(tmp_path: Path) -> None:
+    rng = np.random.default_rng(119)
+    rows = 140
+    signal = rng.normal(size=rows)
+    latent = 0.45 * signal + rng.normal(size=rows)
+    target = (latent > np.median(latent)).astype(int)
+    frame = pd.DataFrame(
+        {
+            "customer_id": [f"customer-{index:04d}" for index in range(rows)],
+            "signal": signal,
+            "noise": rng.normal(size=rows),
+            "target_copy": target,
+            "target": target,
+        }
+    )
+    train_path = tmp_path / "perfect-feature.csv"
+    frame.to_csv(train_path, index=False)
+    dataset = load_dataset(
+        train_path,
+        AutoMLConfig(
+            target="target",
+            task="binary_classification",
+            metric="roc_auc",
+            budget_seconds=30,
+            random_seed=42,
+            n_jobs=1,
+            output_dir=tmp_path / "perfect-run",
+        ),
+    )
+    profile = profile_dataset(dataset, TaskType.BINARY_CLASSIFICATION).model_copy(
+        update={"id_candidates": []},
+        deep=True,
+    )
+    specification = _logistic_spec("univariate_50").model_copy(
+        update={
+            "numeric_imputer": "mean",
+            "model_params": {"C": 0.04, "class_weight": None, "max_iter": 100},
+        },
+        deep=True,
+    )
+    pipeline = build_pipeline(specification, profile, n_jobs=1).fit(dataset.X, dataset.y)
+    names = pipeline.named_steps["preprocessor"].get_feature_names_out()
+    selected_names = names[pipeline.named_steps["selector"].get_support()]
+
+    assert "numeric__target_copy" in selected_names
+    assert roc_auc_score(dataset.y, pipeline.predict_proba(dataset.X)[:, 1]) == pytest.approx(1.0)
 
 
 def test_univariate_selector_requires_imputed_numeric_values(tmp_path: Path) -> None:
