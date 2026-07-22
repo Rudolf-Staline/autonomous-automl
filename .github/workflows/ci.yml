@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Synchronize locked environment
+        run: uv sync --frozen
+
+      - name: Run feature-selection regression tests
+        run: >-
+          uv run pytest -q --tb=short -x
+          tests/unit/test_feature_selection.py
+          tests/unit/test_optuna_template_evolution.py
+          > pytest-feature-selection.log 2>&1
+
+      - name: Run full test suite
+        run: uv run pytest -q --tb=short -x > pytest-full.log 2>&1
+
+      - name: Upload pytest failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-failure-logs
+          path: pytest-*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run Ruff lint
+        run: uv run ruff check .
+
+      - name: Check Ruff formatting
+        run: |
+          if ! uv run ruff format --check . > ruff-format.log 2>&1; then
+            uv run ruff format .
+            git diff -- . > ruff-format.patch
+            exit 1
+          fi
+
+      - name: Upload Ruff formatting patch
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ruff-format-patch
+          path: |
+            ruff-format.log
+            ruff-format.patch
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run Pyright
+        run: uv run pyright
+
+      - name: Run end-to-end demo
+        run: uv run automl demo --output-root runs/ci-demo

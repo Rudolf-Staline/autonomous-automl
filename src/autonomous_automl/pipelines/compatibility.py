@@ -13,7 +13,8 @@ _NUMERIC_SCALERS = {"none", "standard", "robust"}
 _CATEGORICAL_IMPUTERS = {"constant", "most_frequent"}
 _CATEGORICAL_ENCODERS = {"one_hot", "ordinal", "frequency"}
 _DATETIME_TRANSFORMERS = {"calendar", "drop"}
-_FEATURE_SELECTORS = {None, "variance"}
+_FEATURE_SELECTORS = {None, "variance", "univariate_25", "univariate_50"}
+_UNIVARIATE_SELECTORS = {"univariate_25", "univariate_50"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +82,12 @@ def check_pipeline_compatibility(
         and not adapter.supports_missing_values()
     ):
         reasons.append("numeric missing values require imputation for this model")
+    if (
+        spec.feature_selector in _UNIVARIATE_SELECTORS
+        and spec.numeric_imputer == "none"
+        and numeric_has_missing
+    ):
+        reasons.append("univariate feature selection requires imputed numeric values")
     if spec.numeric_imputer == "knn" and (profile.n_rows > 50_000 or len(active_numeric) > 100):
         reasons.append("KNN imputation is limited to at most 50k rows and 100 numeric columns")
 
